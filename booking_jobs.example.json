@@ -1,0 +1,12 @@
+{
+  "jobs": {
+    "monday_morning": {
+      "weekdays": ["Mon"],
+      "courses": ["Bodypump", "Cycling"]
+    },
+    "tuesday_evening": {
+      "weekdays": ["Tue"],
+      "courses": ["Bodypump"]
+    }
+  }
+}
