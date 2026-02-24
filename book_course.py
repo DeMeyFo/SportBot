@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -90,6 +91,94 @@ def click_any_visible(page, patterns, label):
         loc = page.get_by_role("button", name=pattern)
         if click_first_visible(loc, label=label):
             return True
+    return False
+
+def wait_until_not_busy(page, timeout_ms=20000):
+    waited = 0
+    step = 400
+    spinner = page.locator("[role='progressbar'], .MuiCircularProgress-root, .spinner, [class*='Spinner']")
+    while waited < timeout_ms:
+        try:
+            if spinner.count() == 0:
+                return True
+            visible = False
+            for i in range(min(spinner.count(), 8)):
+                try:
+                    if spinner.nth(i).is_visible():
+                        visible = True
+                        break
+                except Exception:
+                    pass
+            if not visible:
+                return True
+        except Exception:
+            return True
+        page.wait_for_timeout(step)
+        waited += step
+    return False
+
+def stabilize_kurse_view(page):
+    # In manchen Sessions bleibt die Tabelle im Ladespinner hängen.
+    # Dann den Filter/Datum-Combobox-Zustand bereinigen.
+    comboboxes = page.locator("input[role='combobox'], input[id*='mui' i]")
+    if comboboxes.count():
+        box = comboboxes.first
+        try:
+            if box.is_visible():
+                is_invalid = (box.get_attribute("aria-invalid") or "").lower() == "true"
+                # Filter leeren
+                box.fill("")
+                box.press("Enter")
+                page.wait_for_timeout(300)
+
+                # Bei invalidem Datum explizit auf heute setzen (dd.mm.yyyy)
+                if is_invalid:
+                    today = datetime.now().strftime("%d.%m.%Y")
+                    box.fill(today)
+                    box.press("Enter")
+                    page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+    if wait_until_not_busy(page, timeout_ms=12000):
+        return
+
+    # Fallback: harter Refresh + einmalige Navigation auf Kurse
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle")
+    click_any_visible(
+        page,
+        [
+            re.compile(r"^Kurse$|Classes|Termine|Appointments", re.IGNORECASE),
+        ],
+        label="KurseAfterReload",
+    )
+    wait_until_not_busy(page, timeout_ms=12000)
+
+def wait_for_booking_actions(page, timeout_ms=20000):
+    patterns = [
+        re.compile(r"Kostenfrei|Free", re.IGNORECASE),
+        re.compile(r"Weiter|Next", re.IGNORECASE),
+        re.compile(r"Jetzt buchen|Book now", re.IGNORECASE),
+        re.compile(r"^Buchen$|Book", re.IGNORECASE),
+        re.compile(r"Warteliste|Waitlist", re.IGNORECASE),
+        re.compile(r"Auf Warteliste|Join waitlist", re.IGNORECASE),
+        re.compile(r"Übernehmen|Apply|Confirm", re.IGNORECASE),
+    ]
+    waited = 0
+    step = 400
+    while waited < timeout_ms:
+        for pattern in patterns:
+            loc = page.get_by_role("button", name=pattern)
+            count = loc.count()
+            for i in range(min(count, 8)):
+                try:
+                    if loc.nth(i).is_visible():
+                        return True
+                except Exception:
+                    pass
+        page.wait_for_timeout(step)
+        waited += step
     return False
 
 def has_visible_text(page, pattern):
@@ -528,6 +617,8 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
 
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(500)
+        stabilize_kurse_view(page)
+        page.wait_for_timeout(400)
 
         if slot_name and click_course_slot_by_name(page, slot_name):
             course_btn = True
@@ -573,6 +664,14 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
         raise RuntimeError(
             "❌ Falscher Flow erkannt (Probetraining statt Kursbuchung). "
             "Screenshot: mysports_wrong_flow_probetraining.png"
+        )
+
+    # Warten, bis der Buchungsdialog/die Aktions-Buttons wirklich da sind.
+    if not wait_for_booking_actions(page, timeout_ms=20000):
+        page.screenshot(path="mysports_booking_actions_timeout.png", full_page=True)
+        raise RuntimeError(
+            "❌ Buchungsdialog nicht rechtzeitig geladen. "
+            "Screenshot: mysports_booking_actions_timeout.png"
         )
 
     # 5) Kostenfrei/Weiter/Jetzt buchen
