@@ -1,3 +1,3 @@
-2026/02/24-11:10:16.587 1734563 Reusing MANIFEST /Users/dennismeyer/Documents/SportBot/.mysports_profile/Default/Sync Data/LevelDB/MANIFEST-000001
-2026/02/24-11:10:16.598 1734563 Recovering log #3
-2026/02/24-11:10:16.599 1734563 Reusing old log /Users/dennismeyer/Documents/SportBot/.mysports_profile/Default/Sync Data/LevelDB/000003.log 
+2026/02/24-14:43:55.158 179074d Reusing MANIFEST /Users/dennismeyer/Documents/SportBot/.mysports_profile/Default/Sync Data/LevelDB/MANIFEST-000001
+2026/02/24-14:43:55.171 179074d Recovering log #3
+2026/02/24-14:43:55.172 179074d Reusing old log /Users/dennismeyer/Documents/SportBot/.mysports_profile/Default/Sync Data/LevelDB/000003.log 

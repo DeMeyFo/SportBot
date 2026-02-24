@@ -20,6 +20,7 @@ EMAIL = os.getenv("MYSPORTS_EMAIL")
 PASSWORD = os.getenv("MYSPORTS_PASSWORD")
 VIEWPORT_WIDTH = int(os.getenv("MYSPORTS_VIEWPORT_WIDTH", "1920"))
 VIEWPORT_HEIGHT = int(os.getenv("MYSPORTS_VIEWPORT_HEIGHT", "1080"))
+HEADLESS = os.getenv("MYSPORTS_HEADLESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 DAY_ALIASES = {
     "mon": ["montag", "monday", "mo"],
@@ -89,6 +90,17 @@ def click_any_visible(page, patterns, label):
         loc = page.get_by_role("button", name=pattern)
         if click_first_visible(loc, label=label):
             return True
+    return False
+
+def has_visible_text(page, pattern):
+    loc = page.get_by_text(pattern)
+    count = loc.count()
+    for i in range(min(count, 40)):
+        try:
+            if loc.nth(i).is_visible():
+                return True
+        except Exception:
+            pass
     return False
 
 def focus_weekday(page, weekday):
@@ -196,6 +208,11 @@ def click_course_slot_by_name(page, slot_name):
             try:
                 if not item.is_visible():
                     continue
+                raw_label = item.get_attribute("aria-label") or item.inner_text() or ""
+                normalized_label = raw_label.lower()
+                # Trial/Probetraining-Kacheln nie als Kurs-Slot interpretieren.
+                if "probetraining" in normalized_label or "trial" in normalized_label:
+                    continue
                 safe_click(item, label=label)
                 page.wait_for_timeout(450)
                 if has_booking_actions():
@@ -249,6 +266,10 @@ def click_course_slot_by_name(page, slot_name):
             label = item.get_attribute("aria-label") or item.inner_text() or ""
             normalized = norm_text(label)
             if not normalized:
+                continue
+
+            # Trial/Probetraining generell ausschließen.
+            if "probetraining" in normalized or "trial" in normalized:
                 continue
 
             # Starker Treffer: ganzer normalisierter String enthalten.
@@ -365,6 +386,19 @@ def ensure_member_area(page):
             pass
 
 def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
+    has_visible_text_fn = globals().get("has_visible_text")
+    if has_visible_text_fn is None:
+        def has_visible_text_fn(local_page, pattern):
+            loc = local_page.get_by_text(pattern)
+            count = loc.count()
+            for i in range(min(count, 40)):
+                try:
+                    if loc.nth(i).is_visible():
+                        return True
+                except Exception:
+                    pass
+            return False
+
     selected_course_name = course_name or COURSE_NAME
     page = open_member_page_from_business(page)
     page.wait_for_timeout(500)
@@ -528,6 +562,19 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
             ).first
             safe_click(course_btn, label="Course")
 
+    # Schutz: falscher Flow (Probetraining) statt Kursbuchung.
+    # WICHTIG: Nicht auf das bloße Wort "Probetraining" prüfen, da es oft nur ein Menüpunkt ist.
+    is_probetraining_flow = (
+        has_visible_text_fn(page, re.compile(r"Which date would you like to choose\?", re.IGNORECASE))
+        or has_visible_text_fn(page, re.compile(r"Welches Datum m[oö]chtest du ausw[aä]hlen\?", re.IGNORECASE))
+    )
+    if is_probetraining_flow:
+        page.screenshot(path="mysports_wrong_flow_probetraining.png", full_page=True)
+        raise RuntimeError(
+            "❌ Falscher Flow erkannt (Probetraining statt Kursbuchung). "
+            "Screenshot: mysports_wrong_flow_probetraining.png"
+        )
+
     # 5) Kostenfrei/Weiter/Jetzt buchen
     free_btn = page.get_by_role("button", name=re.compile(r"Kostenfrei|Free", re.IGNORECASE))
     if free_btn.count():
@@ -593,13 +640,16 @@ def main():
     with sync_playwright() as p:
         launch_kwargs = dict(
             user_data_dir=str(PROFILE_DIR),
-            headless=False,
-            no_viewport=True,
+            headless=HEADLESS,
         )
-        launch_kwargs["args"] = [
-            "--start-maximized",
-            f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
-        ]
+        if HEADLESS:
+            launch_kwargs["viewport"] = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
+        else:
+            launch_kwargs["no_viewport"] = True
+            launch_kwargs["args"] = [
+                "--start-maximized",
+                f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
+            ]
 
         context = p.chromium.launch_persistent_context(**launch_kwargs)
         page = context.pages[0] if context.pages else context.new_page()

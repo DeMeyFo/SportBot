@@ -12,9 +12,20 @@ STATE_FILE = Path("mysports_state.json")
 PROFILE_DIR = Path(".mysports_profile")
 VIEWPORT_WIDTH = int(os.getenv("MYSPORTS_VIEWPORT_WIDTH", "1920"))
 VIEWPORT_HEIGHT = int(os.getenv("MYSPORTS_VIEWPORT_HEIGHT", "1080"))
+HEADLESS = os.getenv("MYSPORTS_HEADLESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 EMAIL = os.environ["MYSPORTS_EMAIL"]
 PASSWORD = os.environ["MYSPORTS_PASSWORD"]
+
+
+def first_visible(*locators):
+    for loc in locators:
+        try:
+            if loc.count() and loc.first.is_visible():
+                return loc.first
+        except Exception:
+            pass
+    return None
 
 def dismiss_cookie_banner(page):
     cookie_buttons = [
@@ -36,10 +47,34 @@ def login_and_validate(page):
     dismiss_cookie_banner(page)
 
     if "login-register" in page.url:
-        # Login (stabiler: per role + name)
-        page.get_by_role("textbox", name="E-Mail *").fill(EMAIL)
-        page.get_by_role("textbox", name="Passwort *").fill(PASSWORD)
-        page.get_by_role("button", name="Login").click()
+        # Login (Fallback-Selektoren für Headless/Layout-Varianten)
+        email_input = first_visible(
+            page.get_by_role("textbox", name=re.compile(r"E-?Mail", re.IGNORECASE)),
+            page.locator("input[type='email']"),
+            page.locator("input[name*='mail' i]"),
+            page.locator("input[id*='mail' i]"),
+        )
+        password_input = first_visible(
+            page.get_by_role("textbox", name=re.compile(r"Passwort|Password", re.IGNORECASE)),
+            page.locator("input[type='password']"),
+            page.locator("input[name*='pass' i]"),
+            page.locator("input[id*='pass' i]"),
+        )
+        login_button = first_visible(
+            page.get_by_role("button", name=re.compile(r"^Login$|Sign in|Anmelden", re.IGNORECASE)),
+            page.locator("button:has-text('Login')"),
+            page.locator("button[type='submit']"),
+        )
+
+        if not email_input or not password_input or not login_button:
+            page.screenshot(path="mysports_login_fields_missing.png", full_page=True)
+            raise RuntimeError(
+                "❌ Login-Felder/Button nicht gefunden. Screenshot: mysports_login_fields_missing.png"
+            )
+
+        email_input.fill(EMAIL)
+        password_input.fill(PASSWORD)
+        login_button.click()
 
     # Login abschliessen lassen (inkl. eventueller Redirects/Captcha)
     try:
@@ -69,16 +104,22 @@ def login_and_validate(page):
             "Screenshot: mysports_login_invalid.png"
         )
 
-def open_logged_in_context(playwright, headless=False):
+def open_logged_in_context(playwright, headless=None):
+    if headless is None:
+        headless = HEADLESS
+
     launch_kwargs = dict(
         user_data_dir=str(PROFILE_DIR),
-        headless=False,
-        no_viewport=True,
+        headless=headless,
     )
-    launch_kwargs["args"] = [
-        "--start-maximized",
-        f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
-    ]
+    if headless:
+        launch_kwargs["viewport"] = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
+    else:
+        launch_kwargs["no_viewport"] = True
+        launch_kwargs["args"] = [
+            "--start-maximized",
+            f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
+        ]
 
     context = playwright.chromium.launch_persistent_context(**launch_kwargs)
     page = context.pages[0] if context.pages else context.new_page()

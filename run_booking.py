@@ -3,7 +3,7 @@ from playwright.sync_api import sync_playwright
 import argparse
 import os
 
-from save_session import open_logged_in_context, STATE_FILE
+from save_session import open_logged_in_context, STATE_FILE, HEADLESS
 from book_course import run_booking_flow, COURSE_NAME
 
 
@@ -33,7 +33,7 @@ def main():
 
         for attempt in range(1, attempts + 1):
             print(f"1/2 Login + Session ... (Versuch {attempt}/{attempts})")
-            context, page = open_logged_in_context(p, headless=False)
+            context, page = open_logged_in_context(p, headless=HEADLESS)
             context.storage_state(path=str(STATE_FILE))
             print("✅ Session gespeichert.")
 
