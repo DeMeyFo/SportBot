@@ -117,6 +117,35 @@ def wait_until_not_busy(page, timeout_ms=20000):
         waited += step
     return False
 
+def close_blocking_overlays(page):
+    # Schließt offene Menüs/Dropdowns, die Klicks auf Kurs-Slots blockieren können.
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(120)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(120)
+    except Exception:
+        pass
+
+    # Falls ein Dropdown offen bleibt: in den oberen leeren Bereich klicken.
+    try:
+        page.mouse.click(20, 20)
+        page.wait_for_timeout(120)
+    except Exception:
+        pass
+
+    # Offene Listbox explizit wegklicken.
+    try:
+        listbox = page.locator("[role='listbox']")
+        if listbox.count():
+            for i in range(min(listbox.count(), 3)):
+                if listbox.nth(i).is_visible():
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(120)
+                    break
+    except Exception:
+        pass
+
 def stabilize_kurse_view(page):
     # In manchen Sessions bleibt die Tabelle im Ladespinner hängen.
     # Dann den Filter/Datum-Combobox-Zustand bereinigen.
@@ -526,6 +555,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
 
     # 2) Wenn expliziter Slot-Name gesetzt ist: direkt diesen Tabellenslot klicken.
     course_btn = None
+    close_blocking_overlays(page)
     if slot_name:
         if click_course_slot_by_name(page, slot_name):
             page.wait_for_load_state("networkidle")
@@ -620,6 +650,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
         stabilize_kurse_view(page)
         page.wait_for_timeout(400)
 
+        close_blocking_overlays(page)
         if slot_name and click_course_slot_by_name(page, slot_name):
             course_btn = True
         else:
@@ -665,6 +696,8 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
             "❌ Falscher Flow erkannt (Probetraining statt Kursbuchung). "
             "Screenshot: mysports_wrong_flow_probetraining.png"
         )
+
+    close_blocking_overlays(page)
 
     # Warten, bis der Buchungsdialog/die Aktions-Buttons wirklich da sind.
     if not wait_for_booking_actions(page, timeout_ms=20000):
