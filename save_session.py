@@ -14,8 +14,8 @@ VIEWPORT_WIDTH = int(os.getenv("MYSPORTS_VIEWPORT_WIDTH", "1920"))
 VIEWPORT_HEIGHT = int(os.getenv("MYSPORTS_VIEWPORT_HEIGHT", "1080"))
 HEADLESS = os.getenv("MYSPORTS_HEADLESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
-EMAIL = os.environ["MYSPORTS_EMAIL"]
-PASSWORD = os.environ["MYSPORTS_PASSWORD"]
+EMAIL = os.getenv("MYSPORTS_EMAIL")
+PASSWORD = os.getenv("MYSPORTS_PASSWORD")
 
 
 def first_visible(*locators):
@@ -41,7 +41,13 @@ def dismiss_cookie_banner(page):
         except Exception:
             pass
 
-def login_and_validate(page):
+def login_and_validate(page, email=None, password=None):
+    login_email = email or EMAIL
+    login_password = password or PASSWORD
+
+    if not login_email or not login_password:
+        raise RuntimeError("❌ Login-Credentials fehlen. Setze MYSPORTS_EMAIL/MYSPORTS_PASSWORD oder übergebe --email/--password.")
+
     page.goto(LOGIN_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(500)
     dismiss_cookie_banner(page)
@@ -72,8 +78,8 @@ def login_and_validate(page):
                 "❌ Login-Felder/Button nicht gefunden. Screenshot: mysports_login_fields_missing.png"
             )
 
-        email_input.fill(EMAIL)
-        password_input.fill(PASSWORD)
+        email_input.fill(login_email)
+        password_input.fill(login_password)
         login_button.click()
 
     # Login abschliessen lassen (inkl. eventueller Redirects/Captcha)
@@ -104,7 +110,7 @@ def login_and_validate(page):
             "Screenshot: mysports_login_invalid.png"
         )
 
-def open_logged_in_context(playwright, headless=None):
+def open_logged_in_context(playwright, headless=None, email=None, password=None):
     if headless is None:
         headless = HEADLESS
 
@@ -123,7 +129,7 @@ def open_logged_in_context(playwright, headless=None):
 
     context = playwright.chromium.launch_persistent_context(**launch_kwargs)
     page = context.pages[0] if context.pages else context.new_page()
-    login_and_validate(page)
+    login_and_validate(page, email=email, password=password)
     return context, page
 
 def main():

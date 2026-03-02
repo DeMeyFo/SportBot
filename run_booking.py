@@ -12,6 +12,8 @@ def parse_args():
     parser.add_argument("--course", help="Course name for this run (one course per cronjob).")
     parser.add_argument("--slot", help="Optional exact slot label, e.g. 'BODYPUMP, 17:45 - 18:45'.")
     parser.add_argument("--weekday", help="Optional weekday filter, e.g. Mon/Tue or Montag/Dienstag.")
+    parser.add_argument("--email", help="Login email (overrides MYSPORTS_EMAIL).")
+    parser.add_argument("--password", help="Login password (overrides MYSPORTS_PASSWORD).")
     parser.add_argument(
         "--attempts",
         type=int,
@@ -33,14 +35,26 @@ def main():
 
         for attempt in range(1, attempts + 1):
             print(f"1/2 Login + Session ... (Versuch {attempt}/{attempts})")
-            context, page = open_logged_in_context(p, headless=HEADLESS)
+            context, page = open_logged_in_context(
+                p,
+                headless=HEADLESS,
+                email=args.email,
+                password=args.password,
+            )
             context.storage_state(path=str(STATE_FILE))
             print("✅ Session gespeichert.")
 
             print("2/2 Starte Buchung ...")
             try:
                 print(f"➡️ Buche: {target}")
-                run_booking_flow(page, course_name=course, weekday=args.weekday, slot_name=args.slot)
+                run_booking_flow(
+                    page,
+                    course_name=course,
+                    weekday=args.weekday,
+                    slot_name=args.slot,
+                    email=args.email,
+                    password=args.password,
+                )
                 return
             except Exception as exc:
                 last_error = exc

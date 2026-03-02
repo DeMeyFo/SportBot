@@ -189,7 +189,7 @@ def wait_for_booking_actions(page, timeout_ms=20000):
         re.compile(r"Kostenfrei|Free", re.IGNORECASE),
         re.compile(r"Weiter|Next", re.IGNORECASE),
         re.compile(r"Jetzt buchen|Book now", re.IGNORECASE),
-        re.compile(r"^Buchen$|Book", re.IGNORECASE),
+        re.compile(r"^Buchen$|^Book$", re.IGNORECASE),
         re.compile(r"Warteliste|Waitlist", re.IGNORECASE),
         re.compile(r"Auf Warteliste|Join waitlist", re.IGNORECASE),
         re.compile(r"Übernehmen|Apply|Confirm", re.IGNORECASE),
@@ -220,6 +220,125 @@ def has_visible_text(page, pattern):
         except Exception:
             pass
     return False
+
+def is_kurse_view(page):
+    # Strenger Check: In der Kursansicht sind typischerweise Filter + Datumsfeld vorhanden
+    # und die Tagesleiste enthält Datum/Jahr.
+    has_filter = has_visible_text(page, re.compile(r"^Filter(\s*\(\d+\))?$", re.IGNORECASE))
+    has_date_row = has_visible_text(
+        page,
+        re.compile(
+            r"(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag).*(20\d{2})",
+            re.IGNORECASE,
+        ),
+    )
+    has_date_input = False
+    try:
+        has_date_input = page.locator("input[role='combobox'], input[id*='mui' i]").count() > 0
+    except Exception:
+        pass
+    return has_filter or (has_date_row and has_date_input)
+
+def is_booking_options_view(page):
+    if has_visible_text(page, re.compile(r"Buchungsoptionen|Booking options", re.IGNORECASE)):
+        return True
+    if has_visible_text(page, re.compile(r"Kostenfrei|Free", re.IGNORECASE)) and has_visible_text(page, re.compile(r"Weiter|Next", re.IGNORECASE)):
+        return True
+    return False
+
+def ensure_kurse_page(page):
+    if is_kurse_view(page):
+        return
+    nav_candidates = [
+        page.locator("header a, nav a, [role='navigation'] a").filter(has_text=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_role("link", name=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_role("button", name=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_text(re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+    ]
+
+    for _ in range(4):
+        close_blocking_overlays(page)
+        for loc in nav_candidates:
+            count = loc.count()
+            for i in range(min(count, 12)):
+                item = loc.nth(i)
+                try:
+                    if not item.is_visible():
+                        continue
+                    safe_click(item, label="OpenKurse")
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(500)
+                    if is_kurse_view(page):
+                        return
+                except Exception:
+                    try:
+                        safe_click(item, label="OpenKurseForce", allow_force=True)
+                        page.wait_for_load_state("networkidle")
+                        page.wait_for_timeout(500)
+                        if is_kurse_view(page):
+                            return
+                    except Exception:
+                        pass
+        page.wait_for_timeout(500)
+
+    page.screenshot(path="mysports_kurse_view_missing.png", full_page=True)
+    raise RuntimeError(
+        "❌ Kursansicht konnte nicht geöffnet werden. Screenshot: mysports_kurse_view_missing.png"
+    )
+
+def open_kurse_view_recorded(page, email=None):
+    # 1) Avatar-Menü öffnen (laut Codegen häufig nötig, damit Kurse-Link sichtbar wird)
+    user_email = email or EMAIL
+    avatar_candidates = [
+        page.locator(".Avatar--szjdia.deiVEI"),
+        page.locator("[class*='Avatar']"),
+        page.get_by_text(user_email or "", exact=False) if user_email else page.locator("__never__"),
+    ]
+    for loc in avatar_candidates:
+        try:
+            if loc.count() and loc.first.is_visible():
+                safe_click(loc.first, label="AvatarMenu")
+                page.wait_for_timeout(300)
+                break
+        except Exception:
+            pass
+
+    # 2) Kurse exakt nach Recording öffnen
+    kurse_opened = False
+    kurse_candidates = [
+        page.get_by_role("link", name=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_role("button", name=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_text(re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+    ]
+    for loc in kurse_candidates:
+        try:
+            if loc.count() and loc.first.is_visible():
+                safe_click(loc.first, label="OpenKurseRecorded")
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(400)
+                kurse_opened = True
+                break
+        except Exception:
+            pass
+
+    if not kurse_opened:
+        ensure_kurse_page(page)
+    else:
+        stabilize_kurse_view(page)
+
+    # 3) "Übernehmen" falls vor der Kursauswahl notwendig
+    confirm_candidates = [
+        page.get_by_role("button", name=re.compile(r"^Übernehmen$|Apply|Confirm", re.IGNORECASE)),
+        page.get_by_text(re.compile(r"^Übernehmen$", re.IGNORECASE)),
+    ]
+    for loc in confirm_candidates:
+        try:
+            if loc.count() and loc.first.is_visible():
+                safe_click(loc.first, label="ÜbernehmenPreSlot")
+                page.wait_for_timeout(250)
+                break
+        except Exception:
+            pass
 
 def focus_weekday(page, weekday):
     key = normalize_weekday(weekday)
@@ -297,13 +416,15 @@ def click_course_in_weekday_column(page, course_name, weekday):
 def click_course_slot_by_name(page, slot_name):
     if not slot_name:
         return False
+    if not is_kurse_view(page):
+        return False
 
     def has_booking_actions():
         patterns = [
             re.compile(r"Kostenfrei|Free", re.IGNORECASE),
             re.compile(r"Weiter|Next", re.IGNORECASE),
             re.compile(r"Jetzt buchen|Book now", re.IGNORECASE),
-            re.compile(r"^Buchen$|Book", re.IGNORECASE),
+            re.compile(r"^Buchen$|^Book$", re.IGNORECASE),
             re.compile(r"Warteliste|Waitlist", re.IGNORECASE),
             re.compile(r"Auf Warteliste|Join waitlist", re.IGNORECASE),
             re.compile(r"Übernehmen|Apply|Confirm", re.IGNORECASE),
@@ -319,7 +440,7 @@ def click_course_slot_by_name(page, slot_name):
                     pass
         return False
 
-    def try_click(locator, label):
+    def try_click(locator, label, require_actions=False):
         count = locator.count()
         for i in range(min(count, 40)):
             item = locator.nth(i)
@@ -332,8 +453,11 @@ def click_course_slot_by_name(page, slot_name):
                 if "probetraining" in normalized_label or "trial" in normalized_label:
                     continue
                 safe_click(item, label=label)
-                page.wait_for_timeout(450)
-                if has_booking_actions():
+                page.wait_for_timeout(250)
+                if has_booking_actions() or wait_for_booking_actions(page, timeout_ms=5000):
+                    return True
+                if not require_actions:
+                    # Klick gilt als erfolgreich; finale Validierung erfolgt später im Flow.
                     return True
                 # Falscher Treffer: Dialog/Panel schließen und nächsten Kandidaten testen.
                 try:
@@ -347,12 +471,12 @@ def click_course_slot_by_name(page, slot_name):
 
     # 1) Exakter/nahezu exakter Treffer im aria-label
     pattern = re.compile(rf"{re.escape(slot_name)}", re.IGNORECASE)
-    if try_click(page.get_by_role("button", name=pattern), label="CourseSlotName"):
+    if try_click(page.get_by_role("button", name=pattern), label="CourseSlotName", require_actions=False):
         return True
 
     # 2) Textsuche in Slot-Containern
     text_slots = page.locator("[role='button']").filter(has_text=re.compile(rf"{re.escape(slot_name)}", re.IGNORECASE))
-    if try_click(text_slots, label="CourseSlotText"):
+    if try_click(text_slots, label="CourseSlotText", require_actions=False):
         return True
 
     # 3) Fuzzy-Fallback: toleriert Namensabweichungen (Interpunktion, Leerzeichen, Groß/Kleinschreibung).
@@ -445,14 +569,16 @@ def dismiss_cookie_banner(page):
         except Exception:
             pass
 
-def login_if_needed(page):
+def login_if_needed(page, email=None, password=None):
     dismiss_cookie_banner(page)
     if "login-register" not in page.url:
         return
-    if not EMAIL or not PASSWORD:
-        raise RuntimeError("❌ MYSPORTS_EMAIL/MYSPORTS_PASSWORD fehlen in der Umgebung.")
-    page.get_by_role("textbox", name=re.compile(r"E-Mail", re.IGNORECASE)).fill(EMAIL)
-    page.get_by_role("textbox", name=re.compile(r"Passwort", re.IGNORECASE)).fill(PASSWORD)
+    login_email = email or EMAIL
+    login_password = password or PASSWORD
+    if not login_email or not login_password:
+        raise RuntimeError("❌ Login-Credentials fehlen. Setze MYSPORTS_EMAIL/MYSPORTS_PASSWORD oder übergebe --email/--password.")
+    page.get_by_role("textbox", name=re.compile(r"E-Mail", re.IGNORECASE)).fill(login_email)
+    page.get_by_role("textbox", name=re.compile(r"Passwort", re.IGNORECASE)).fill(login_password)
     page.get_by_role("button", name=re.compile(r"^Login$", re.IGNORECASE)).click()
     try:
         page.wait_for_url(re.compile(r"mysports\\.com/(?!login-register)"), timeout=45000)
@@ -503,7 +629,7 @@ def ensure_member_area(page):
         except Exception:
             pass
 
-def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
+def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email=None, password=None):
     has_visible_text_fn = globals().get("has_visible_text")
     if has_visible_text_fn is None:
         def has_visible_text_fn(local_page, pattern):
@@ -530,10 +656,10 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(500)
         dismiss_cookie_banner(page)
-        login_if_needed(page)
+        login_if_needed(page, email=email, password=password)
 
     if "login-register" in page.url:
-        login_if_needed(page)
+        login_if_needed(page, email=email, password=password)
 
     if "login-register" in page.url:
         page.screenshot(path="mysports_auth_required.png", full_page=True)
@@ -553,9 +679,15 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
     except Exception:
         pass  # schon ausgewählt oder keine Auswahlseite
 
+    if slot_name:
+        open_kurse_view_recorded(page, email=email)
+    else:
+        ensure_kurse_page(page)
+        stabilize_kurse_view(page)
+    close_blocking_overlays(page)
+
     # 2) Wenn expliziter Slot-Name gesetzt ist: direkt diesen Tabellenslot klicken.
     course_btn = None
-    close_blocking_overlays(page)
     if slot_name:
         if click_course_slot_by_name(page, slot_name):
             page.wait_for_load_state("networkidle")
@@ -564,7 +696,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
 
     # 3) Wenn kein expliziter Slot-Name gesetzt ist und kein Wochentag vorgegeben ist:
     # direkter Klick auf Studio-Kurskarte.
-    if course_btn is None and not weekday:
+    if course_btn is None and not weekday and not slot_name:
         direct_course = page.get_by_role(
             "button",
             name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
@@ -657,6 +789,13 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
             focus_weekday(page, weekday)
             page.wait_for_timeout(300)
 
+        # Wenn ein expliziter Slot-Name gesetzt ist, hier nicht auf Kursnamen zurückfallen.
+        if course_btn is None and slot_name:
+            page.screenshot(path="mysports_slot_not_found.png", full_page=True)
+            raise RuntimeError(
+                f"❌ Slot nicht gefunden: '{slot_name}'. Screenshot: mysports_slot_not_found.png"
+            )
+
         # Wenn Wochentag gesetzt ist, versuche zuerst Kombination aus Tag+Kurs im Label.
         if course_btn is None and weekday:
             day_pattern = "|".join(re.escape(x) for x in DAY_ALIASES[normalize_weekday(weekday)])
@@ -683,6 +822,13 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
                 name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
             ).first
             safe_click(course_btn, label="Course")
+
+    if not is_kurse_view(page) and not is_booking_options_view(page):
+        page.screenshot(path="mysports_not_in_kurse_view.png", full_page=True)
+        raise RuntimeError(
+            "❌ Weder Kursansicht noch Buchungsoptionen aktiv. "
+            "Screenshot: mysports_not_in_kurse_view.png"
+        )
 
     # Schutz: falscher Flow (Probetraining) statt Kursbuchung.
     # WICHTIG: Nicht auf das bloße Wort "Probetraining" prüfen, da es oft nur ein Menüpunkt ist.
@@ -726,6 +872,15 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
         except Exception:
             pass
 
+    # Recording-Flow für Slot-Buchung: zuerst "Weiter", dann "Jetzt buchen".
+    if slot_name:
+        click_any_visible(
+            page,
+            [re.compile(r"^Weiter$|Next", re.IGNORECASE)],
+            label="WeiterRecorded",
+        )
+        page.wait_for_timeout(200)
+
     # "Weiter" ist nicht in jedem Dialogschritt vorhanden.
     click_any_visible(
         page,
@@ -737,7 +892,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None):
         page,
         [
             re.compile(r"Jetzt buchen|Book now", re.IGNORECASE),
-            re.compile(r"^Buchen$|Book", re.IGNORECASE),
+            re.compile(r"^Buchen$|^Book$", re.IGNORECASE),
         ],
         label="JetztBuchen",
     )
