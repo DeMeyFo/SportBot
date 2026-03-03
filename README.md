@@ -103,12 +103,31 @@ Ohne Desktop starte im virtuellen Display:
 xvfb-run -a .venv/bin/python run_booking.py --slot "Indoor Cycling, 18:00 - 19:00" --attempts 3
 ```
 
-## Einmalig per `at`
+## macOS mit `launchd`
 
-Einmaliger Job heute um 19:16:
+Auf dem Mac ist `launchd` der bevorzugte Scheduler fuer einmalige und wiederkehrende Jobs.
+
+Beispiel-Datei:
 
 ```bash
-echo 'cd /home/dennis/SportBot && xvfb-run -a /home/dennis/SportBot/.venv/bin/python run_booking.py --slot "BODYPUMP, 19:15 - 20:15" --attempts 3 >> /home/dennis/SportBot/booking_bodypump_1915.log 2>&1' | at 19:16
+~/Library/LaunchAgents/com.dennis.sportbot.rueckenworkout.plist
+```
+
+Wichtige `launchctl`-Befehle:
+
+```bash
+plutil -lint ~/Library/LaunchAgents/com.dennis.sportbot.rueckenworkout.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.dennis.sportbot.rueckenworkout.plist 2>/dev/null
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dennis.sportbot.rueckenworkout.plist
+launchctl kickstart -k gui/$(id -u)/com.dennis.sportbot.rueckenworkout
+launchctl list | grep rueckenworkout
+```
+
+Wenn der Job nur einmal laufen soll, danach wieder entfernen:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.dennis.sportbot.rueckenworkout.plist
+rm ~/Library/LaunchAgents/com.dennis.sportbot.rueckenworkout.plist
 ```
 
 ## Cronjob-Beispiel
@@ -118,6 +137,10 @@ Taeglich um 18:01:
 ```cron
 1 18 * * * cd /home/dennis/SportBot && xvfb-run -a /home/dennis/SportBot/.venv/bin/python run_booking.py --slot "Indoor Cycling, 18:00 - 19:00" --attempts 3 >> /home/dennis/SportBot/booking_indoor_1800.log 2>&1
 ```
+
+Hinweis:
+- Auf Linux/Raspberry Pi ist `cron` oder `at` sinnvoll.
+- Auf macOS ist `launchd` in der Regel die bessere Wahl.
 
 ## Wichtige Parameter
 

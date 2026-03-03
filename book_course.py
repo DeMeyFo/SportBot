@@ -222,22 +222,43 @@ def has_visible_text(page, pattern):
     return False
 
 def is_kurse_view(page):
-    # Strenger Check: In der Kursansicht sind typischerweise Filter + Datumsfeld vorhanden
-    # und die Tagesleiste enthält Datum/Jahr.
-    has_filter = has_visible_text(page, re.compile(r"^Filter(\s*\(\d+\))?$", re.IGNORECASE))
+    # Die Kursansicht ist je nach Sprache/Viewport nicht immer identisch.
+    # Auf dem VPS sehen wir z. B. "Classes" + "Filters (1)" in Englisch.
+    has_filter = has_visible_text(page, re.compile(r"^Filters?(\s*\(\d+\))?$", re.IGNORECASE))
     has_date_row = has_visible_text(
         page,
         re.compile(
-            r"(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag).*(20\d{2})",
+            r"(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday).*(20\d{2})",
             re.IGNORECASE,
         ),
     )
     has_date_input = False
+    has_classes_nav = False
+    has_slot_cards = False
     try:
         has_date_input = page.locator("input[role='combobox'], input[id*='mui' i]").count() > 0
     except Exception:
         pass
-    return has_filter or (has_date_row and has_date_input)
+    try:
+        has_classes_nav = (
+            page.locator("a, button, [role='tab'], [role='link']")
+            .filter(has_text=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE))
+            .count()
+            > 0
+        )
+    except Exception:
+        pass
+    try:
+        # Slot-Karten enthalten im Grid fast immer Uhrzeiten.
+        has_slot_cards = (
+            page.locator("[role='button']")
+            .filter(has_text=re.compile(r"\b\d{1,2}:\d{2}\b", re.IGNORECASE))
+            .count()
+            > 0
+        )
+    except Exception:
+        pass
+    return has_filter or (has_date_row and has_date_input) or (has_classes_nav and has_slot_cards)
 
 def is_booking_options_view(page):
     if has_visible_text(page, re.compile(r"Buchungsoptionen|Booking options", re.IGNORECASE)):
