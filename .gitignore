@@ -179,3 +179,10 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Project runtime artifacts
+.mysports_profile/
+mysports_state.json
+mysports_*.png
+booking_*.log
+booking_*.err.log
