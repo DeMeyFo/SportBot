@@ -258,13 +258,39 @@ def is_kurse_view(page):
         )
     except Exception:
         pass
-    return has_filter or (has_date_row and has_date_input) or (has_classes_nav and has_slot_cards)
+    return has_filter or (has_date_row and has_date_input) or (has_classes_nav and has_date_row)
 
 def is_booking_options_view(page):
     if has_visible_text(page, re.compile(r"Buchungsoptionen|Booking options", re.IGNORECASE)):
         return True
     if has_visible_text(page, re.compile(r"Kostenfrei|Free", re.IGNORECASE)) and has_visible_text(page, re.compile(r"Weiter|Next", re.IGNORECASE)):
         return True
+    return False
+
+def is_kurse_loading_view(page):
+    try:
+        kurse_tab_visible = (
+            page.locator("a, button, [role='tab'], [role='link']")
+            .filter(has_text=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE))
+            .count()
+            > 0
+        )
+    except Exception:
+        kurse_tab_visible = False
+    if not kurse_tab_visible:
+        return False
+
+    try:
+        spinner = page.locator("[role='progressbar'], .MuiCircularProgress-root, .spinner, [class*='Spinner']")
+        count = spinner.count()
+        for i in range(min(count, 8)):
+            try:
+                if spinner.nth(i).is_visible():
+                    return True
+            except Exception:
+                pass
+    except Exception:
+        pass
     return False
 
 def ensure_kurse_page(page):
@@ -360,6 +386,31 @@ def open_kurse_view_recorded(page, email=None):
                 break
         except Exception:
             pass
+
+def go_to_next_week(page):
+    if not is_kurse_view(page):
+        return False
+    next_week_candidates = [
+        page.get_by_role("button", name=re.compile(r"^Pfeil rechts$|^Right arrow$|^Next$", re.IGNORECASE)),
+        page.locator("button[aria-label*='rechts' i], button[aria-label*='right' i], button[title*='rechts' i], button[title*='right' i]"),
+        page.get_by_text(re.compile(r"^>$")),
+    ]
+    for loc in next_week_candidates:
+        try:
+            count = loc.count()
+            for i in range(min(count, 8)):
+                item = loc.nth(i)
+                if not item.is_visible():
+                    continue
+                safe_click(item, label="NextWeek")
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(600)
+                stabilize_kurse_view(page)
+                close_blocking_overlays(page)
+                return True
+        except Exception:
+            pass
+    return False
 
 def focus_weekday(page, weekday):
     key = normalize_weekday(weekday)
@@ -700,11 +751,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
     except Exception:
         pass  # schon ausgewählt oder keine Auswahlseite
 
-    if slot_name:
-        open_kurse_view_recorded(page, email=email)
-    else:
-        ensure_kurse_page(page)
-        stabilize_kurse_view(page)
+    open_kurse_view_recorded(page, email=email)
     close_blocking_overlays(page)
 
     # 2) Wenn expliziter Slot-Name gesetzt ist: direkt diesen Tabellenslot klicken.
@@ -714,9 +761,13 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
+        elif go_to_next_week(page) and click_course_slot_by_name(page, slot_name):
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(400)
+            course_btn = True
 
     # 3) Wenn kein expliziter Slot-Name gesetzt ist und kein Wochentag vorgegeben ist:
-    # direkter Klick auf Studio-Kurskarte.
+    # direkter Klick auf Kurs in der aktuellen/folgenden Woche.
     if course_btn is None and not weekday and not slot_name:
         direct_course = page.get_by_role(
             "button",
@@ -730,6 +781,19 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
                 course_btn = direct_course
         except Exception:
             course_btn = None
+        if course_btn is None and go_to_next_week(page):
+            direct_course = page.get_by_role(
+                "button",
+                name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
+            ).first
+            try:
+                if direct_course.is_visible():
+                    safe_click(direct_course, label="CourseDirectNextWeek")
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(500)
+                    course_btn = direct_course
+            except Exception:
+                course_btn = None
 
     # 4) Falls direkte Kurskarte nicht sichtbar: über "Kurse" navigieren
     def ensure_nav_open():
@@ -806,6 +870,8 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
         close_blocking_overlays(page)
         if slot_name and click_course_slot_by_name(page, slot_name):
             course_btn = True
+        elif slot_name and go_to_next_week(page) and click_course_slot_by_name(page, slot_name):
+            course_btn = True
         else:
             focus_weekday(page, weekday)
             page.wait_for_timeout(300)
@@ -836,13 +902,36 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
                     "button",
                     name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
                 ).first
-                safe_click(course_btn, label="Course")
+                try:
+                    safe_click(course_btn, label="Course")
+                except Exception:
+                    if not go_to_next_week(page):
+                        raise
+                    course_btn = page.get_by_role(
+                        "button",
+                        name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
+                    ).first
+                    safe_click(course_btn, label="CourseNextWeek")
         elif course_btn is None:
             course_btn = page.get_by_role(
                 "button",
                 name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
             ).first
-            safe_click(course_btn, label="Course")
+            try:
+                safe_click(course_btn, label="Course")
+            except Exception:
+                if not go_to_next_week(page):
+                    raise
+                course_btn = page.get_by_role(
+                    "button",
+                    name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
+                ).first
+                safe_click(course_btn, label="CourseNextWeek")
+
+    if not is_kurse_view(page) and not is_booking_options_view(page):
+        if is_kurse_loading_view(page):
+            wait_until_not_busy(page, timeout_ms=20000)
+            stabilize_kurse_view(page)
 
     if not is_kurse_view(page) and not is_booking_options_view(page):
         page.screenshot(path="mysports_not_in_kurse_view.png", full_page=True)
