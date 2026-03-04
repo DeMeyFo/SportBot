@@ -359,19 +359,28 @@ def open_kurse_view_recorded(page, email=None):
     ]
     for loc in kurse_candidates:
         try:
-            if loc.count() and loc.first.is_visible():
-                safe_click(loc.first, label="OpenKurseRecorded")
+            count = loc.count()
+            for i in range(min(count, 12)):
+                item = loc.nth(i)
+                if not item.is_visible():
+                    continue
+                safe_click(item, label="OpenKurseRecorded")
                 page.wait_for_load_state("networkidle")
                 page.wait_for_timeout(400)
-                kurse_opened = True
-                break
+                if is_kurse_view(page) or is_kurse_loading_view(page):
+                    kurse_opened = True
+                    break
         except Exception:
             pass
+        if kurse_opened:
+            break
 
     if not kurse_opened:
         ensure_kurse_page(page)
     else:
         stabilize_kurse_view(page)
+        if not is_kurse_view(page) and not is_kurse_loading_view(page):
+            ensure_kurse_page(page)
 
     # 3) "Übernehmen" falls vor der Kursauswahl notwendig
     confirm_candidates = [
