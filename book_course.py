@@ -22,6 +22,8 @@ PASSWORD = os.getenv("MYSPORTS_PASSWORD")
 VIEWPORT_WIDTH = int(os.getenv("MYSPORTS_VIEWPORT_WIDTH", "1920"))
 VIEWPORT_HEIGHT = int(os.getenv("MYSPORTS_VIEWPORT_HEIGHT", "1080"))
 HEADLESS = os.getenv("MYSPORTS_HEADLESS", "false").strip().lower() in {"1", "true", "yes", "on"}
+LOCALE = os.getenv("MYSPORTS_LOCALE", "de-DE")
+TIMEZONE_ID = os.getenv("MYSPORTS_TIMEZONE", "Europe/Berlin")
 
 DAY_ALIASES = {
     "mon": ["montag", "monday", "mo"],
@@ -1047,6 +1049,8 @@ def main():
         launch_kwargs = dict(
             user_data_dir=str(PROFILE_DIR),
             headless=HEADLESS,
+            locale=LOCALE,
+            timezone_id=TIMEZONE_ID,
         )
         if HEADLESS:
             launch_kwargs["viewport"] = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
