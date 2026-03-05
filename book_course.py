@@ -3,6 +3,7 @@ import re
 import sys
 import unicodedata
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -33,6 +34,16 @@ DAY_ALIASES = {
     "fri": ["freitag", "friday", "fr", "fri"],
     "sat": ["samstag", "saturday", "sa", "sat"],
     "sun": ["sonntag", "sunday", "so", "sun"],
+}
+
+WEEKDAY_INDEX = {
+    "mon": 0,
+    "tue": 1,
+    "wed": 2,
+    "thu": 3,
+    "fri": 4,
+    "sat": 5,
+    "sun": 6,
 }
 
 def safe_click(locator, timeout=15000, label="", allow_force=True):
@@ -423,6 +434,26 @@ def go_to_next_week(page):
             pass
     return False
 
+def maybe_go_to_next_week_for_weekday(page, weekday):
+    if not weekday:
+        return False
+    key = normalize_weekday(weekday)
+    if not key:
+        return False
+    target_idx = WEEKDAY_INDEX.get(key)
+    if target_idx is None:
+        return False
+
+    try:
+        now_idx = datetime.now(ZoneInfo(TIMEZONE_ID)).weekday()
+    except Exception:
+        now_idx = datetime.now().weekday()
+
+    # Beispiel: Heute ist Donnerstag, Ziel ist Dienstag -> nächste Woche verwenden.
+    if target_idx < now_idx:
+        return go_to_next_week(page)
+    return False
+
 def focus_weekday(page, weekday):
     key = normalize_weekday(weekday)
     if not key:
@@ -764,6 +795,8 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
 
     open_kurse_view_recorded(page, email=email)
     close_blocking_overlays(page)
+    if weekday:
+        maybe_go_to_next_week_for_weekday(page, weekday)
 
     # 2) Wenn expliziter Slot-Name gesetzt ist: direkt diesen Tabellenslot klicken.
     course_btn = None
