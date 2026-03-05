@@ -1001,11 +1001,35 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
 
     # Warten, bis der Buchungsdialog/die Aktions-Buttons wirklich da sind.
     if not wait_for_booking_actions(page, timeout_ms=20000):
-        page.screenshot(path="mysports_booking_actions_timeout.png", full_page=True)
-        raise RuntimeError(
-            "❌ Buchungsdialog nicht rechtzeitig geladen. "
-            "Screenshot: mysports_booking_actions_timeout.png"
-        )
+        # Retry: Kursdialog ist manchmal nicht aufgegangen, obwohl Kursansicht sichtbar ist.
+        close_blocking_overlays(page)
+        wait_until_not_busy(page, timeout_ms=8000)
+        stabilize_kurse_view(page)
+
+        retried_click = False
+        if weekday:
+            if click_course_in_weekday_column(page, selected_course_name, weekday):
+                retried_click = True
+        if not retried_click:
+            retry_course = page.get_by_role(
+                "button",
+                name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
+            )
+            if click_first_visible(retry_course, label="CourseRetryDialog"):
+                retried_click = True
+
+        if retried_click:
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(500)
+
+        if wait_for_booking_actions(page, timeout_ms=25000):
+            pass
+        else:
+            page.screenshot(path="mysports_booking_actions_timeout.png", full_page=True)
+            raise RuntimeError(
+                "❌ Buchungsdialog nicht rechtzeitig geladen. "
+                "Screenshot: mysports_booking_actions_timeout.png"
+            )
 
     # 5) Kostenfrei/Weiter/Jetzt buchen
     free_btn = page.get_by_role("button", name=re.compile(r"Kostenfrei|Free", re.IGNORECASE))
