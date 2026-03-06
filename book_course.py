@@ -815,9 +815,12 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
     if weekday:
         maybe_go_to_next_week_for_weekday(page, weekday)
 
-    # 2) Wenn expliziter Slot-Name gesetzt ist: direkt diesen Tabellenslot klicken.
+    # 2) Wenn expliziter Slot-Name gesetzt ist: Wochentag fokussieren und dann den Slot klicken.
     course_btn = None
     if slot_name:
+        if weekday:
+            focus_weekday(page, weekday)
+            page.wait_for_timeout(300)
         if click_course_slot_by_name(page, slot_name):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
