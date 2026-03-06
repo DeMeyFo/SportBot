@@ -46,6 +46,17 @@ WEEKDAY_INDEX = {
     "sun": 6,
 }
 
+# Für UI-Selektoren keine 2-Zeichen-Aliase verwenden, damit keine False-Positives entstehen.
+WEEKDAY_UI_LABELS = {
+    "mon": ["Montag", "Monday", "Mon"],
+    "tue": ["Dienstag", "Tuesday", "Tue"],
+    "wed": ["Mittwoch", "Wednesday", "Wed"],
+    "thu": ["Donnerstag", "Thursday", "Thu"],
+    "fri": ["Freitag", "Friday", "Fri"],
+    "sat": ["Samstag", "Saturday", "Sat"],
+    "sun": ["Sonntag", "Sunday", "Sun"],
+}
+
 def safe_click(locator, timeout=15000, label="", allow_force=True):
     try:
         locator.wait_for(state="visible", timeout=timeout)
@@ -105,6 +116,14 @@ def click_any_visible(page, patterns, label):
         if click_first_visible(loc, label=label):
             return True
     return False
+
+def weekday_ui_pattern(key):
+    labels = WEEKDAY_UI_LABELS.get(key, [])
+    if not labels:
+        return re.compile(r"$^")
+    escaped = [re.escape(x) for x in labels]
+    # Word-boundary verhindert Matches wie "we" in "News".
+    return re.compile(rf"\b(?:{'|'.join(escaped)})\b", re.IGNORECASE)
 
 def wait_until_not_busy(page, timeout_ms=20000):
     waited = 0
@@ -458,8 +477,7 @@ def focus_weekday(page, weekday):
     key = normalize_weekday(weekday)
     if not key:
         return
-    day_words = DAY_ALIASES[key]
-    pattern = re.compile("|".join(re.escape(x) for x in day_words), re.IGNORECASE)
+    pattern = weekday_ui_pattern(key)
     selectors = [
         page.get_by_role("tab", name=pattern),
         page.get_by_role("button", name=pattern),
@@ -480,8 +498,7 @@ def get_weekday_column_bounds(page, weekday):
     key = normalize_weekday(weekday)
     if not key:
         return None
-    day_words = DAY_ALIASES[key]
-    pattern = re.compile("|".join(re.escape(x) for x in day_words), re.IGNORECASE)
+    pattern = weekday_ui_pattern(key)
     candidates = [
         page.get_by_role("tab", name=pattern),
         page.get_by_role("button", name=pattern),
@@ -929,7 +946,9 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
 
         # Wenn Wochentag gesetzt ist, versuche zuerst Kombination aus Tag+Kurs im Label.
         if course_btn is None and weekday:
-            day_pattern = "|".join(re.escape(x) for x in DAY_ALIASES[normalize_weekday(weekday)])
+            day_key = normalize_weekday(weekday)
+            day_labels = WEEKDAY_UI_LABELS.get(day_key, [])
+            day_pattern = "|".join(re.escape(x) for x in day_labels)
             combined = page.get_by_role(
                 "button",
                 name=re.compile(rf"({day_pattern}).*{re.escape(selected_course_name)}|{re.escape(selected_course_name)}.*({day_pattern})", re.IGNORECASE),
