@@ -544,7 +544,7 @@ def click_course_in_weekday_column(page, course_name, weekday):
             pass
     return False
 
-def click_course_slot_by_name(page, slot_name):
+def click_course_slot_by_name(page, slot_name, weekday=None):
     if not slot_name:
         return False
     if not is_kurse_view(page):
@@ -571,6 +571,8 @@ def click_course_slot_by_name(page, slot_name):
                     pass
         return False
 
+    weekday_bounds = get_weekday_column_bounds(page, weekday) if weekday else None
+
     def try_click(locator, label, require_actions=False):
         count = locator.count()
         for i in range(min(count, 40)):
@@ -578,6 +580,14 @@ def click_course_slot_by_name(page, slot_name):
             try:
                 if not item.is_visible():
                     continue
+                if weekday_bounds:
+                    box = item.bounding_box()
+                    if not box:
+                        continue
+                    center_x = box["x"] + (box["width"] / 2.0)
+                    x_min, x_max = weekday_bounds
+                    if not ((x_min - 12) <= center_x <= (x_max + 12)):
+                        continue
                 raw_label = item.get_attribute("aria-label") or item.inner_text() or ""
                 normalized_label = raw_label.lower()
                 # Trial/Probetraining-Kacheln nie als Kurs-Slot interpretieren.
@@ -673,6 +683,14 @@ def click_course_slot_by_name(page, slot_name):
         try:
             if not candidate.is_visible():
                 continue
+            if weekday_bounds:
+                box = candidate.bounding_box()
+                if not box:
+                    continue
+                center_x = box["x"] + (box["width"] / 2.0)
+                x_min, x_max = weekday_bounds
+                if not ((x_min - 12) <= center_x <= (x_max + 12)):
+                    continue
             safe_click(candidate, label="CourseSlotFuzzyBest")
             page.wait_for_timeout(450)
             if has_booking_actions():
@@ -821,11 +839,11 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
         if weekday:
             focus_weekday(page, weekday)
             page.wait_for_timeout(300)
-        if click_course_slot_by_name(page, slot_name):
+        if click_course_slot_by_name(page, slot_name, weekday=weekday):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
-        elif go_to_next_week(page) and click_course_slot_by_name(page, slot_name):
+        elif go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
@@ -932,9 +950,9 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
         page.wait_for_timeout(400)
 
         close_blocking_overlays(page)
-        if slot_name and click_course_slot_by_name(page, slot_name):
+        if slot_name and click_course_slot_by_name(page, slot_name, weekday=weekday):
             course_btn = True
-        elif slot_name and go_to_next_week(page) and click_course_slot_by_name(page, slot_name):
+        elif slot_name and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
             course_btn = True
         else:
             focus_weekday(page, weekday)
