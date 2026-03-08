@@ -125,6 +125,24 @@ def weekday_ui_pattern(key):
     # Word-boundary verhindert Matches wie "we" in "News".
     return re.compile(rf"\b(?:{'|'.join(escaped)})\b", re.IGNORECASE)
 
+def is_booking_success_view(page, weekday=None):
+    success = (
+        has_visible_text(page, re.compile(r"Du hast diesen Termin gebucht", re.IGNORECASE))
+        or has_visible_text(page, re.compile(r"You have booked (this )?(appointment|event)", re.IGNORECASE))
+        or has_visible_text(page, re.compile(r"Zu meinen Terminbuchungen|My bookings|My appointments", re.IGNORECASE))
+    )
+    if not success:
+        return False
+    if not weekday:
+        return True
+    try:
+        key = normalize_weekday(weekday)
+        pattern = weekday_ui_pattern(key)
+        # Auf der Bestätigungsseite steht der konkrete Tag (z. B. "Dienstag, 10.03.2026")
+        return has_visible_text(page, pattern)
+    except Exception:
+        return False
+
 def wait_until_not_busy(page, timeout_ms=20000):
     waited = 0
     step = 400
@@ -572,6 +590,9 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
         return False
 
     weekday_bounds = get_weekday_column_bounds(page, weekday) if weekday else None
+    # Bei explizitem Wochentag nie ohne Spalten-Grenzen klicken (verhindert falschen Tag).
+    if weekday and not weekday_bounds:
+        return False
 
     def try_click(locator, label, require_actions=False):
         count = locator.count()
@@ -1039,6 +1060,12 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
 
     close_blocking_overlays(page)
 
+    if is_booking_success_view(page, weekday=weekday):
+        label = slot_name or selected_course_name
+        weekday_info = f" ({weekday})" if weekday else ""
+        print(f"✅ Buchung bestätigt: {label}{weekday_info}")
+        return
+
     # Warten, bis der Buchungsdialog/die Aktions-Buttons wirklich da sind.
     if not wait_for_booking_actions(page, timeout_ms=20000):
         # Retry: Kursdialog ist manchmal nicht aufgegangen, obwohl Kursansicht sichtbar ist.
@@ -1065,6 +1092,11 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
         if wait_for_booking_actions(page, timeout_ms=25000):
             pass
         else:
+            if is_booking_success_view(page, weekday=weekday):
+                label = slot_name or selected_course_name
+                weekday_info = f" ({weekday})" if weekday else ""
+                print(f"✅ Buchung bestätigt: {label}{weekday_info}")
+                return
             page.screenshot(path="mysports_booking_actions_timeout.png", full_page=True)
             raise RuntimeError(
                 "❌ Buchungsdialog nicht rechtzeitig geladen. "
