@@ -1165,6 +1165,20 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
             "Screenshot: mysports_booking_submit_missing.png"
         )
 
+    # Nach Abschluss-Klick nur mit echter Bestätigung als Erfolg werten.
+    page.wait_for_timeout(1800)
+    if is_booking_success_view(page, weekday=weekday):
+        label = slot_name or selected_course_name
+        weekday_info = f" ({weekday})" if weekday else ""
+        print(f"✅ Buchung bestätigt: {label}{weekday_info}")
+        return
+
+    page.screenshot(path="mysports_booking_unconfirmed.png", full_page=True)
+    raise RuntimeError(
+        "❌ Abschluss geklickt, aber keine Buchungsbestätigung erkannt. "
+        "Screenshot: mysports_booking_unconfirmed.png"
+    )
+
     page.wait_for_timeout(1500)
     label = slot_name or selected_course_name
     weekday_info = f" ({weekday})" if weekday else ""

@@ -2,6 +2,7 @@ from playwright.sync_api import sync_playwright
 
 import argparse
 import os
+from datetime import datetime
 
 from save_session import open_logged_in_context, STATE_FILE, HEADLESS
 from book_course import run_booking_flow, COURSE_NAME
@@ -22,6 +23,10 @@ def parse_args():
     )
     return parser.parse_args()
 
+def log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
+
 def main():
     args = parse_args()
     course = (args.course or COURSE_NAME or "").strip()
@@ -34,7 +39,7 @@ def main():
         last_error = None
 
         for attempt in range(1, attempts + 1):
-            print(f"1/2 Login + Session ... (Versuch {attempt}/{attempts})")
+            log(f"1/2 Login + Session ... (Versuch {attempt}/{attempts})")
             context, page = open_logged_in_context(
                 p,
                 headless=HEADLESS,
@@ -42,11 +47,11 @@ def main():
                 password=args.password,
             )
             context.storage_state(path=str(STATE_FILE))
-            print("✅ Session gespeichert.")
+            log("✅ Session gespeichert.")
 
-            print("2/2 Starte Buchung ...")
+            log("2/2 Starte Buchung ...")
             try:
-                print(f"➡️ Buche: {target}")
+                log(f"➡️ Buche: {target}")
                 run_booking_flow(
                     page,
                     course_name=course,
@@ -59,7 +64,7 @@ def main():
             except Exception as exc:
                 last_error = exc
                 if attempt < attempts:
-                    print(f"⚠️ Versuch {attempt} fehlgeschlagen, starte erneut ...")
+                    log(f"⚠️ Versuch {attempt} fehlgeschlagen, starte erneut ...")
                 else:
                     raise
             finally:
