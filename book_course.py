@@ -234,6 +234,27 @@ def stabilize_kurse_view(page):
     )
     wait_until_not_busy(page, timeout_ms=12000)
 
+def reset_kurse_date_to_today(page):
+    # Erzwingt einen stabilen Startpunkt (aktuelle Woche), damit kein "Driften" auf weit
+    # zukünftige Kalenderwochen aus vorherigen Sessions entsteht.
+    comboboxes = page.locator("input[role='combobox'], input[id*='mui' i]")
+    if not comboboxes.count():
+        return
+    box = comboboxes.first
+    try:
+        if not box.is_visible():
+            return
+        try:
+            today = datetime.now(ZoneInfo(TIMEZONE_ID)).strftime("%d.%m.%Y")
+        except Exception:
+            today = datetime.now().strftime("%d.%m.%Y")
+        box.fill(today)
+        box.press("Enter")
+        page.wait_for_timeout(500)
+        wait_until_not_busy(page, timeout_ms=10000)
+    except Exception:
+        pass
+
 def wait_for_booking_actions(page, timeout_ms=20000):
     patterns = [
         re.compile(r"Kostenfrei|Free", re.IGNORECASE),
@@ -474,22 +495,10 @@ def go_to_next_week(page):
 def maybe_go_to_next_week_for_weekday(page, weekday):
     if not weekday:
         return False
-    key = normalize_weekday(weekday)
-    if not key:
-        return False
-    target_idx = WEEKDAY_INDEX.get(key)
-    if target_idx is None:
-        return False
-
-    try:
-        now_idx = datetime.now(ZoneInfo(TIMEZONE_ID)).weekday()
-    except Exception:
-        now_idx = datetime.now().weekday()
-
-    # Beispiel: Heute ist Donnerstag, Ziel ist Dienstag -> nächste Woche verwenden.
-    if target_idx < now_idx:
-        return go_to_next_week(page)
-    return False
+    # Für den Produktionsfall sollen Kursbuchungen immer in der darauffolgenden Woche
+    # erfolgen (typisch: ca. +6 Tage vorher buchen). Daher bei gesetztem Wochentag
+    # konsequent auf die nächste Woche springen.
+    return go_to_next_week(page)
 
 def focus_weekday(page, weekday):
     key = normalize_weekday(weekday)
@@ -871,6 +880,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
 
     open_kurse_view_recorded(page, email=email)
     close_blocking_overlays(page)
+    reset_kurse_date_to_today(page)
     if weekday:
         maybe_go_to_next_week_for_weekday(page, weekday)
 
