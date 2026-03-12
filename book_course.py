@@ -1001,7 +1001,11 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
         elif slot_name and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
             course_btn = True
         else:
-            focus_weekday(page, weekday)
+            try:
+                focus_weekday(page, weekday)
+            except RuntimeError:
+                # Fallback: ohne klickbaren Tageskopf weiter, die Spaltenlogik entscheidet später.
+                pass
             page.wait_for_timeout(300)
 
         # Wenn ein expliziter Slot-Name gesetzt ist, hier nicht auf Kursnamen zurückfallen.
