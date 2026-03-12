@@ -500,12 +500,25 @@ def focus_weekday(page, weekday):
         page.get_by_role("tab", name=pattern),
         page.get_by_role("button", name=pattern),
         page.get_by_role("link", name=pattern),
-        page.get_by_text(pattern),
     ]
     for loc in selectors:
-        if click_first_visible(loc, label=f"Weekday:{weekday}"):
-            page.wait_for_timeout(400)
-            return
+        count = loc.count()
+        for i in range(min(count, 25)):
+            item = loc.nth(i)
+            try:
+                if not item.is_visible():
+                    continue
+                box = item.bounding_box()
+                if not box:
+                    continue
+                # Wochentag-Header sitzt im oberen Kalenderbereich.
+                if not (120 <= box["y"] <= 360 and box["width"] >= 70):
+                    continue
+                safe_click(item, label=f"Weekday:{weekday}")
+                page.wait_for_timeout(400)
+                return
+            except Exception:
+                pass
     page.screenshot(path="mysports_weekday_not_found.png", full_page=True)
     raise RuntimeError(
         f"❌ Gewünschter Wochentag '{weekday}' nicht auswählbar. "
@@ -520,7 +533,7 @@ def get_weekday_column_bounds(page, weekday):
     candidates = [
         page.get_by_role("tab", name=pattern),
         page.get_by_role("button", name=pattern),
-        page.get_by_text(pattern),
+        page.get_by_role("link", name=pattern),
     ]
     for loc in candidates:
         count = loc.count()
@@ -533,7 +546,7 @@ def get_weekday_column_bounds(page, weekday):
                 if not box:
                     continue
                 # Kopfzeile befindet sich oben.
-                if box["y"] < 220 and box["width"] > 40:
+                if 120 <= box["y"] <= 360 and box["width"] >= 70:
                     return (box["x"], box["x"] + box["width"])
             except Exception:
                 pass
@@ -1003,20 +1016,12 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
                     name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
                 ).first
             else:
-                course_btn = page.get_by_role(
-                    "button",
-                    name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
-                ).first
-                try:
-                    safe_click(course_btn, label="Course")
-                except Exception:
-                    if not go_to_next_week(page):
-                        raise
-                    course_btn = page.get_by_role(
-                        "button",
-                        name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
-                    ).first
-                    safe_click(course_btn, label="CourseNextWeek")
+                # Bei explizitem Wochentag niemals auf "erstbesten Kurs" zurückfallen.
+                page.screenshot(path="mysports_weekday_course_mismatch.png", full_page=True)
+                raise RuntimeError(
+                    f"❌ Kurs '{selected_course_name}' wurde nicht eindeutig am Wochentag '{weekday}' gefunden. "
+                    "Screenshot: mysports_weekday_course_mismatch.png"
+                )
         elif course_btn is None:
             course_btn = page.get_by_role(
                 "button",
