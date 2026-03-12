@@ -25,6 +25,7 @@ VIEWPORT_HEIGHT = int(os.getenv("MYSPORTS_VIEWPORT_HEIGHT", "1080"))
 HEADLESS = os.getenv("MYSPORTS_HEADLESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 LOCALE = os.getenv("MYSPORTS_LOCALE", "de-DE")
 TIMEZONE_ID = os.getenv("MYSPORTS_TIMEZONE", "Europe/Berlin")
+TARGET_DAYS_AHEAD = int(os.getenv("MYSPORTS_TARGET_DAYS_AHEAD", "6"))
 
 DAY_ALIASES = {
     "mon": ["montag", "monday", "mo"],
@@ -234,9 +235,9 @@ def stabilize_kurse_view(page):
     )
     wait_until_not_busy(page, timeout_ms=12000)
 
-def reset_kurse_date_to_today(page):
-    # Erzwingt einen stabilen Startpunkt (aktuelle Woche), damit kein "Driften" auf weit
-    # zukünftige Kalenderwochen aus vorherigen Sessions entsteht.
+def reset_kurse_date(page, days_ahead=0):
+    # Erzwingt einen stabilen Startpunkt über das Datumsfeld.
+    # days_ahead=0 -> heute, days_ahead=6 -> typischer Buchungszeitpunkt in Folgewoche.
     comboboxes = page.locator("input[role='combobox'], input[id*='mui' i]")
     if not comboboxes.count():
         return
@@ -245,10 +246,16 @@ def reset_kurse_date_to_today(page):
         if not box.is_visible():
             return
         try:
-            today = datetime.now(ZoneInfo(TIMEZONE_ID)).strftime("%d.%m.%Y")
+            target = datetime.now(ZoneInfo(TIMEZONE_ID))
         except Exception:
-            today = datetime.now().strftime("%d.%m.%Y")
-        box.fill(today)
+            target = datetime.now()
+        try:
+            from datetime import timedelta
+            target = target + timedelta(days=max(0, int(days_ahead)))
+        except Exception:
+            pass
+        target_str = target.strftime("%d.%m.%Y")
+        box.fill(target_str)
         box.press("Enter")
         page.wait_for_timeout(500)
         wait_until_not_busy(page, timeout_ms=10000)
@@ -493,12 +500,9 @@ def go_to_next_week(page):
     return False
 
 def maybe_go_to_next_week_for_weekday(page, weekday):
-    if not weekday:
-        return False
-    # Für den Produktionsfall sollen Kursbuchungen immer in der darauffolgenden Woche
-    # erfolgen (typisch: ca. +6 Tage vorher buchen). Daher bei gesetztem Wochentag
-    # konsequent auf die nächste Woche springen.
-    return go_to_next_week(page)
+    # Datumssteuerung erfolgt über reset_kurse_date(...). Kein zusätzlicher Week-Jump,
+    # damit die Ansicht nicht ungewollt zu weit in die Zukunft driftet.
+    return False
 
 def focus_weekday(page, weekday):
     key = normalize_weekday(weekday)
@@ -880,7 +884,10 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
 
     open_kurse_view_recorded(page, email=email)
     close_blocking_overlays(page)
-    reset_kurse_date_to_today(page)
+    # Bei Wochentag-Buchungen auf "heute + TARGET_DAYS_AHEAD" gehen (Standard: +6 Tage).
+    # Ohne Wochentag auf heute.
+    days_ahead = TARGET_DAYS_AHEAD if weekday else 0
+    reset_kurse_date(page, days_ahead=days_ahead)
     if weekday:
         maybe_go_to_next_week_for_weekday(page, weekday)
 
@@ -899,7 +906,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
-        elif go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
+        elif (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
@@ -1008,7 +1015,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
         close_blocking_overlays(page)
         if slot_name and click_course_slot_by_name(page, slot_name, weekday=weekday):
             course_btn = True
-        elif slot_name and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
+        elif slot_name and (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
             course_btn = True
         else:
             try:
