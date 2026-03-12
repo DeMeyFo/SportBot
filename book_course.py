@@ -525,7 +525,7 @@ def focus_weekday(page, weekday):
                 if not box:
                     continue
                 # Wochentag-Header sitzt im oberen Kalenderbereich.
-                if not (120 <= box["y"] <= 360 and box["width"] >= 70):
+                if not (80 <= box["y"] <= 520 and box["width"] >= 60):
                     continue
                 safe_click(item, label=f"Weekday:{weekday}")
                 page.wait_for_timeout(400)
@@ -566,7 +566,7 @@ def get_weekday_column_bounds(page, weekday):
                 if not box:
                     continue
                 # Kopfzeile befindet sich oben.
-                if 120 <= box["y"] <= 360 and box["width"] >= 70:
+                if 80 <= box["y"] <= 520 and box["width"] >= 60:
                     return (box["x"], box["x"] + box["width"])
             except Exception:
                 pass
@@ -623,9 +623,8 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
         return False
 
     weekday_bounds = get_weekday_column_bounds(page, weekday) if weekday else None
-    # Bei explizitem Wochentag nie ohne Spalten-Grenzen klicken (verhindert falschen Tag).
-    if weekday and not weekday_bounds:
-        return False
+    # Wenn keine Spaltengrenzen erkannt wurden, versuchen wir trotzdem den Slot zu finden.
+    # Das ist ein Fallback für Layout-Varianten auf VPS/Xvfb.
 
     def try_click(locator, label, require_actions=False):
         count = locator.count()
