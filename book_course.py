@@ -519,6 +519,12 @@ def focus_weekday(page, weekday):
                 return
             except Exception:
                 pass
+
+    # Fallback: In manchen Layouts sind Wochentage nicht klickbar.
+    # Wenn die Zielspalte eindeutig erkannt wird, reicht das für den weiteren Flow.
+    if get_weekday_column_bounds(page, weekday):
+        return
+
     page.screenshot(path="mysports_weekday_not_found.png", full_page=True)
     raise RuntimeError(
         f"❌ Gewünschter Wochentag '{weekday}' nicht auswählbar. "
@@ -534,6 +540,7 @@ def get_weekday_column_bounds(page, weekday):
         page.get_by_role("tab", name=pattern),
         page.get_by_role("button", name=pattern),
         page.get_by_role("link", name=pattern),
+        page.get_by_text(pattern),
     ]
     for loc in candidates:
         count = loc.count()
