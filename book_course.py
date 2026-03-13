@@ -925,6 +925,13 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
         effective_days_ahead = max(0, int(days_ahead))
     else:
         effective_days_ahead = TARGET_DAYS_AHEAD if weekday else 0
+    try:
+        from datetime import timedelta
+        target_dt = datetime.now(ZoneInfo(TIMEZONE_ID)) + timedelta(days=effective_days_ahead)
+        target_date_str = target_dt.strftime("%d.%m.%Y")
+    except Exception:
+        target_date_str = "unbekannt"
+    print(f"🎯 Zieldatum: {target_date_str} (days_ahead={effective_days_ahead})")
     reset_kurse_date(page, days_ahead=effective_days_ahead)
     if weekday:
         maybe_go_to_next_week_for_weekday(page, weekday)
@@ -1069,7 +1076,8 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
         if course_btn is None and slot_name:
             page.screenshot(path="mysports_slot_not_found.png", full_page=True)
             raise RuntimeError(
-                f"❌ Slot nicht gefunden: '{slot_name}'. Screenshot: mysports_slot_not_found.png"
+                f"❌ Slot nicht gefunden: '{slot_name}' am Zieldatum {target_date_str}. "
+                "Screenshot: mysports_slot_not_found.png"
             )
 
         # Wenn Wochentag gesetzt ist, versuche zuerst Kombination aus Tag+Kurs im Label.
