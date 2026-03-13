@@ -46,6 +46,7 @@ WEEKDAY_INDEX = {
     "sat": 5,
     "sun": 6,
 }
+WEEKDAY_BY_INDEX = {v: k for k, v in WEEKDAY_INDEX.items()}
 
 # Für UI-Selektoren keine 2-Zeichen-Aliase verwenden, damit keine False-Positives entstehen.
 WEEKDAY_UI_LABELS = {
@@ -921,6 +922,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
     # 1) explizit über CLI (--days-ahead)
     # 2) bei weekday: TARGET_DAYS_AHEAD (Default +6)
     # 3) sonst: heute
+    target_weekday_key = None
     if days_ahead is not None:
         effective_days_ahead = max(0, int(days_ahead))
     else:
@@ -928,39 +930,43 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
     try:
         from datetime import timedelta
         target_dt = datetime.now(ZoneInfo(TIMEZONE_ID)) + timedelta(days=effective_days_ahead)
+        target_weekday_key = WEEKDAY_BY_INDEX.get(target_dt.weekday())
         target_date_str = target_dt.strftime("%d.%m.%Y")
     except Exception:
         target_date_str = "unbekannt"
+    effective_weekday = weekday or target_weekday_key
     print(f"🎯 Zieldatum: {target_date_str} (days_ahead={effective_days_ahead})")
+    if effective_weekday:
+        print(f"🎯 Ziel-Wochentag: {effective_weekday}")
     reset_kurse_date(page, days_ahead=effective_days_ahead)
-    if weekday:
-        maybe_go_to_next_week_for_weekday(page, weekday)
+    if effective_weekday:
+        maybe_go_to_next_week_for_weekday(page, effective_weekday)
     # Bei expliziter Datumssteuerung nie zusätzlich per "nächste Woche" springen.
     allow_week_jump = days_ahead is None
 
     # 2) Wenn expliziter Slot-Name gesetzt ist: Wochentag fokussieren und dann den Slot klicken.
     course_btn = None
     if slot_name:
-        if weekday:
+        if effective_weekday:
             try:
-                focus_weekday(page, weekday)
+                focus_weekday(page, effective_weekday)
             except RuntimeError:
                 # In manchen Layouts ist der Tageskopf nicht klickbar.
                 # Der eigentliche Tagesfilter erfolgt dann über die Spalten-Grenzen im Slot-Klick.
                 pass
             page.wait_for_timeout(300)
-        if click_course_slot_by_name(page, slot_name, weekday=weekday):
+        if click_course_slot_by_name(page, slot_name, weekday=effective_weekday):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
-        elif allow_week_jump and (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
+        elif allow_week_jump and (not effective_weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=effective_weekday):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
 
     # 3) Wenn kein expliziter Slot-Name gesetzt ist und kein Wochentag vorgegeben ist:
     # direkter Klick auf Kurs in der aktuellen/folgenden Woche.
-    if course_btn is None and not weekday and not slot_name:
+    if course_btn is None and not effective_weekday and not slot_name and days_ahead is None:
         direct_course = page.get_by_role(
             "button",
             name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
@@ -1060,13 +1066,14 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
         page.wait_for_timeout(400)
 
         close_blocking_overlays(page)
-        if slot_name and click_course_slot_by_name(page, slot_name, weekday=weekday):
+        if slot_name and click_course_slot_by_name(page, slot_name, weekday=effective_weekday):
             course_btn = True
-        elif slot_name and allow_week_jump and (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
+        elif slot_name and allow_week_jump and (not effective_weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=effective_weekday):
             course_btn = True
         else:
             try:
-                focus_weekday(page, weekday)
+                if effective_weekday:
+                    focus_weekday(page, effective_weekday)
             except RuntimeError:
                 # Fallback: ohne klickbaren Tageskopf weiter, die Spaltenlogik entscheidet später.
                 pass
@@ -1081,8 +1088,8 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
             )
 
         # Wenn Wochentag gesetzt ist, versuche zuerst Kombination aus Tag+Kurs im Label.
-        if course_btn is None and weekday:
-            day_key = normalize_weekday(weekday)
+        if course_btn is None and effective_weekday:
+            day_key = normalize_weekday(effective_weekday)
             day_labels = WEEKDAY_UI_LABELS.get(day_key, [])
             day_pattern = "|".join(re.escape(x) for x in day_labels)
             combined = page.get_by_role(
@@ -1091,7 +1098,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
             )
             if click_first_visible(combined, label="CourseByWeekday"):
                 course_btn = combined.first
-            elif click_course_in_weekday_column(page, selected_course_name, weekday):
+            elif click_course_in_weekday_column(page, selected_course_name, effective_weekday):
                 course_btn = page.get_by_role(
                     "button",
                     name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
@@ -1100,7 +1107,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                 # Bei explizitem Wochentag niemals auf "erstbesten Kurs" zurückfallen.
                 page.screenshot(path="mysports_weekday_course_mismatch.png", full_page=True)
                 raise RuntimeError(
-                    f"❌ Kurs '{selected_course_name}' wurde nicht eindeutig am Wochentag '{weekday}' gefunden. "
+                    f"❌ Kurs '{selected_course_name}' wurde nicht eindeutig am Wochentag '{effective_weekday}' gefunden. "
                     "Screenshot: mysports_weekday_course_mismatch.png"
                 )
         elif course_btn is None:
