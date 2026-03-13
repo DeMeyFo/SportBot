@@ -673,7 +673,8 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
     if try_click(text_slots, label="CourseSlotText", require_actions=True):
         return True
 
-    # 3) Fuzzy-Fallback: toleriert Namensabweichungen (Interpunktion, Leerzeichen, Groß/Kleinschreibung).
+    # 3) Fuzzy-Fallback: toleriert Namensabweichungen (Interpunktion, Leerzeichen, Groß/Kleinschreibung)
+    # sowie 24h/12h-Zeitformate.
     def norm_text(value):
         text = unicodedata.normalize("NFKD", value or "")
         text = "".join(ch for ch in text if not unicodedata.combining(ch))
@@ -682,6 +683,33 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
+    def extract_minutes(value):
+        raw = (value or "").lower()
+        minutes = []
+        seen = set()
+
+        # 12h (e.g. 04:45 PM)
+        for h, m, meridiem in re.findall(r"\b(1[0-2]|0?[1-9]):([0-5]\d)\s*([ap]\.?m\.?)\b", raw):
+            hh = int(h)
+            mm = int(m)
+            is_pm = meridiem.startswith("p")
+            if hh == 12:
+                hh = 12 if is_pm else 0
+            elif is_pm:
+                hh += 12
+            total = hh * 60 + mm
+            if total not in seen:
+                seen.add(total)
+                minutes.append(total)
+
+        # 24h (exclude tokens immediately followed by am/pm)
+        for h, m in re.findall(r"\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*[ap]\.?m\.?)", raw):
+            total = int(h) * 60 + int(m)
+            if total not in seen:
+                seen.add(total)
+                minutes.append(total)
+        return minutes
+
     wanted = norm_text(slot_name)
     if not wanted:
         return False
@@ -689,6 +717,7 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
     wanted_parts = [p.strip() for p in wanted.split(",") if p.strip()]
     wanted_tokens = [t for t in wanted.split(" ") if t]
     wanted_times = re.findall(r"\b\d{1,2}:\d{2}\b", wanted)
+    wanted_minutes = extract_minutes(slot_name)
 
     candidates = page.locator("[role='button']")
     count = candidates.count()
@@ -713,9 +742,13 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
                 scored.append((9999, i))
                 continue
 
-            # Score-basierter Treffer: Tokens + Zeiten.
+            # Score-basierter Treffer: Tokens + Zeiten (24h/12h tolerant).
             tokens_hit = sum(1 for token in wanted_tokens if token in normalized)
-            times_hit = sum(1 for tm in wanted_times if tm in normalized)
+            label_minutes = extract_minutes(label)
+            times_hit = len(set(wanted_minutes) & set(label_minutes)) if wanted_minutes else 0
+            if times_hit == 0 and wanted_times:
+                # Fallback auf einfachen Textvergleich, falls keine Minuten geparsed wurden.
+                times_hit = sum(1 for tm in wanted_times if tm in normalized)
             parts_hit = sum(1 for part in wanted_parts if part and part in normalized)
             score = (tokens_hit * 2) + (times_hit * 4) + (parts_hit * 3)
 
