@@ -1105,9 +1105,47 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                 ).first
             else:
                 # Fallback: alle Kandidaten testen und nur das Zieldatum akzeptieren.
-                target_date_regex = None
+                target_date_regexes = []
                 if target_date_str and target_date_str != "unbekannt":
-                    target_date_regex = re.compile(re.escape(target_date_str), re.IGNORECASE)
+                    try:
+                        day = target_dt.day
+                        month = target_dt.month
+                        year = target_dt.year
+                        # Numeric de/en variants: 18.03.2026 / 18/03/2026 / 03/18/2026 / 3/18/2026
+                        target_date_regexes.extend(
+                            [
+                                re.compile(rf"\b0?{day}[./-]0?{month}[./-]{year}\b", re.IGNORECASE),
+                                re.compile(rf"\b0?{month}[./-]0?{day}[./-]{year}\b", re.IGNORECASE),
+                            ]
+                        )
+                        # Long month variants (EN/DE), e.g. March 18, 2026 / 18. März 2026
+                        month_names = [
+                            target_dt.strftime("%B"),   # locale dependent, often EN
+                            target_dt.strftime("%b"),
+                        ]
+                        de_months = {
+                            1: ["Januar", "Jan"],
+                            2: ["Februar", "Feb"],
+                            3: ["März", "Maerz", "Mär", "Mrz"],
+                            4: ["April", "Apr"],
+                            5: ["Mai"],
+                            6: ["Juni", "Jun"],
+                            7: ["Juli", "Jul"],
+                            8: ["August", "Aug"],
+                            9: ["September", "Sep"],
+                            10: ["Oktober", "Okt"],
+                            11: ["November", "Nov"],
+                            12: ["Dezember", "Dez"],
+                        }
+                        month_names.extend(de_months.get(month, []))
+                        for mname in set(month_names):
+                            if not mname:
+                                continue
+                            m = re.escape(mname)
+                            target_date_regexes.append(re.compile(rf"\b{m}\s+0?{day},?\s+{year}\b", re.IGNORECASE))
+                            target_date_regexes.append(re.compile(rf"\b0?{day}\.?\s+{m}\s+{year}\b", re.IGNORECASE))
+                    except Exception:
+                        target_date_regexes = [re.compile(re.escape(target_date_str), re.IGNORECASE)]
 
                 def back_to_kurse_grid():
                     # In der Buchungsansicht zurück in die Grid-Ansicht.
@@ -1143,7 +1181,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                         if not wait_for_booking_actions(page, timeout_ms=12000):
                             back_to_kurse_grid()
                             continue
-                        if target_date_regex and not has_visible_text_fn(page, target_date_regex):
+                        if target_date_regexes and not any(has_visible_text_fn(page, rx) for rx in target_date_regexes):
                             # Falscher Termin (anderer Tag) -> zurück und nächsten Kandidaten testen.
                             back_to_kurse_grid()
                             continue
