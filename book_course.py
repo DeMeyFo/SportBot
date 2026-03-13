@@ -938,7 +938,9 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
     print(f"🎯 Zieldatum: {target_date_str} (days_ahead={effective_days_ahead})")
     if effective_weekday:
         print(f"🎯 Ziel-Wochentag: {effective_weekday}")
+    ensure_kurse_page(page)
     reset_kurse_date(page, days_ahead=effective_days_ahead)
+    ensure_kurse_page(page)
     if effective_weekday:
         maybe_go_to_next_week_for_weekday(page, effective_weekday)
     # Bei expliziter Datumssteuerung nie zusätzlich per "nächste Woche" springen.
@@ -1159,12 +1161,18 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                         wait_until_not_busy(page, timeout_ms=8000)
                         stabilize_kurse_view(page)
                         close_blocking_overlays(page)
+                        ensure_kurse_page(page)
                         return True
                     try:
                         page.keyboard.press("Escape")
                         page.wait_for_timeout(250)
                     except Exception:
                         pass
+                    if not is_kurse_view(page):
+                        try:
+                            ensure_kurse_page(page)
+                        except Exception:
+                            return False
                     return is_kurse_view(page)
 
                 candidates = page.get_by_role(
