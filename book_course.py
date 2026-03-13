@@ -1104,12 +1104,61 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                     name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
                 ).first
             else:
-                # Bei explizitem Wochentag niemals auf "erstbesten Kurs" zurückfallen.
-                page.screenshot(path="mysports_weekday_course_mismatch.png", full_page=True)
-                raise RuntimeError(
-                    f"❌ Kurs '{selected_course_name}' wurde nicht eindeutig am Wochentag '{effective_weekday}' gefunden. "
-                    "Screenshot: mysports_weekday_course_mismatch.png"
+                # Fallback: alle Kandidaten testen und nur das Zieldatum akzeptieren.
+                target_date_regex = None
+                if target_date_str and target_date_str != "unbekannt":
+                    target_date_regex = re.compile(re.escape(target_date_str), re.IGNORECASE)
+
+                def back_to_kurse_grid():
+                    # In der Buchungsansicht zurück in die Grid-Ansicht.
+                    if click_any_visible(
+                        page,
+                        [re.compile(r"^Zur[üu]ck$|^Back$", re.IGNORECASE)],
+                        label="BackToGrid",
+                    ):
+                        page.wait_for_load_state("networkidle")
+                        page.wait_for_timeout(300)
+                        wait_until_not_busy(page, timeout_ms=8000)
+                        stabilize_kurse_view(page)
+                        close_blocking_overlays(page)
+                        return True
+                    try:
+                        page.keyboard.press("Escape")
+                        page.wait_for_timeout(250)
+                    except Exception:
+                        pass
+                    return is_kurse_view(page)
+
+                candidates = page.get_by_role(
+                    "button",
+                    name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE),
                 )
+                for i in range(min(candidates.count(), 40)):
+                    item = candidates.nth(i)
+                    try:
+                        if not item.is_visible():
+                            continue
+                        safe_click(item, label="CourseByDateFallback")
+                        page.wait_for_timeout(350)
+                        if not wait_for_booking_actions(page, timeout_ms=12000):
+                            back_to_kurse_grid()
+                            continue
+                        if target_date_regex and not has_visible_text_fn(page, target_date_regex):
+                            # Falscher Termin (anderer Tag) -> zurück und nächsten Kandidaten testen.
+                            back_to_kurse_grid()
+                            continue
+                        course_btn = item
+                        break
+                    except Exception:
+                        back_to_kurse_grid()
+                        continue
+
+                if course_btn is None:
+                    page.screenshot(path="mysports_weekday_course_mismatch.png", full_page=True)
+                    raise RuntimeError(
+                        f"❌ Kurs '{selected_course_name}' wurde nicht eindeutig am Wochentag '{effective_weekday}' gefunden. "
+                        "Screenshot: mysports_weekday_course_mismatch.png"
+                    )
         elif course_btn is None:
             course_btn = page.get_by_role(
                 "button",
