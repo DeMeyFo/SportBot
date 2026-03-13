@@ -1204,6 +1204,30 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
             weekday_info = f" ({weekday})" if weekday else ""
             print(f"✅ Kurs auf Warteliste gesetzt: {selected_course_name}{weekday_info}")
             return
+        in_booking_dialog = (
+            has_visible_text_fn(page, re.compile(r"Buchungsoptionen|Booking options", re.IGNORECASE))
+            or has_visible_text_fn(page, re.compile(r"Zusammenfassung|Summary", re.IGNORECASE))
+            or has_visible_text_fn(page, re.compile(r"F[üu]r die Buchung wird kein Guthaben ben[öo]tigt|No credit is required", re.IGNORECASE))
+        )
+        already_booked = has_visible_text_fn(page, re.compile(r"\bGebucht\b|\bBooked\b", re.IGNORECASE))
+        if in_booking_dialog and already_booked:
+            label = slot_name or selected_course_name
+            weekday_info = f" ({weekday})" if weekday else ""
+            print(f"✅ Kurs bereits gebucht: {label}{weekday_info}")
+            return
+        sold_out = has_visible_text_fn(page, re.compile(r"Ausgebucht|Fully booked", re.IGNORECASE))
+        if in_booking_dialog and sold_out:
+            page.screenshot(path="mysports_booking_sold_out.png", full_page=True)
+            raise RuntimeError(
+                "❌ Kurs ist ausgebucht und kein Wartelisten-Button verfügbar. "
+                "Screenshot: mysports_booking_sold_out.png"
+            )
+        if not in_booking_dialog:
+            page.screenshot(path="mysports_booking_dialog_missing.png", full_page=True)
+            raise RuntimeError(
+                "❌ Nicht im Buchungsdialog gelandet (keine Buchungsoptionen/Zusammenfassung erkannt). "
+                "Screenshot: mysports_booking_dialog_missing.png"
+            )
         page.screenshot(path="mysports_booking_submit_missing.png", full_page=True)
         raise RuntimeError(
             "❌ Abschluss-Button nicht gefunden (Jetzt buchen/Buchen). "
