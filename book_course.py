@@ -198,21 +198,75 @@ def close_blocking_overlays(page):
     except Exception:
         pass
 
+def find_date_input(page):
+    # In der Kurse-Ansicht gibt es oft mehrere Comboboxen (Studio + Datum).
+    # Wir wählen gezielt das Datumsfeld anhand von Wert/Attributen.
+    inputs = page.locator("input[role='combobox'], input[id*='mui' i], input[placeholder]")
+    count = inputs.count()
+    best = None
+    best_score = -999
+
+    for i in range(min(count, 20)):
+        item = inputs.nth(i)
+        try:
+            if not item.is_visible():
+                continue
+            value = ""
+            try:
+                value = item.input_value() or ""
+            except Exception:
+                value = (item.get_attribute("value") or "")
+            attrs = " ".join(
+                [
+                    value,
+                    item.get_attribute("placeholder") or "",
+                    item.get_attribute("aria-label") or "",
+                    item.get_attribute("name") or "",
+                    item.get_attribute("id") or "",
+                    item.get_attribute("class") or "",
+                ]
+            ).lower()
+
+            score = 0
+            if re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", value):
+                score += 10
+            if re.search(r"datum|date|calendar|kalender", attrs):
+                score += 8
+            if re.search(r"studio|gym|location|club|fitness", attrs):
+                score -= 8
+
+            if score > best_score:
+                best = item
+                best_score = score
+        except Exception:
+            pass
+
+    if best is not None and best_score > -1:
+        return best
+
+    # Fallback: falls nichts eindeutig erkannt wurde, bei mehreren Feldern das zweite nehmen
+    # (im aktuellen Layout: 1=Studio, 2=Datum).
+    visible = []
+    for i in range(min(count, 10)):
+        item = inputs.nth(i)
+        try:
+            if item.is_visible():
+                visible.append(item)
+        except Exception:
+            pass
+    if len(visible) >= 2:
+        return visible[1]
+    return visible[0] if visible else None
+
 def stabilize_kurse_view(page):
     # In manchen Sessions bleibt die Tabelle im Ladespinner hängen.
     # Dann den Filter/Datum-Combobox-Zustand bereinigen.
-    comboboxes = page.locator("input[role='combobox'], input[id*='mui' i]")
-    if comboboxes.count():
-        box = comboboxes.first
+    box = find_date_input(page)
+    if box is not None:
         try:
             if box.is_visible():
                 is_invalid = (box.get_attribute("aria-invalid") or "").lower() == "true"
-                # Filter leeren
-                box.fill("")
-                box.press("Enter")
-                page.wait_for_timeout(300)
-
-                # Bei invalidem Datum explizit auf heute setzen (dd.mm.yyyy)
+                # Nur bei ungültigem Datumsfeld korrigieren; keine Studio-/Filterwerte löschen.
                 if is_invalid:
                     today = datetime.now().strftime("%d.%m.%Y")
                     box.fill(today)
@@ -239,10 +293,9 @@ def stabilize_kurse_view(page):
 def reset_kurse_date(page, days_ahead=0):
     # Erzwingt einen stabilen Startpunkt über das Datumsfeld.
     # days_ahead=0 -> heute, days_ahead=6 -> typischer Buchungszeitpunkt in Folgewoche.
-    comboboxes = page.locator("input[role='combobox'], input[id*='mui' i]")
-    if not comboboxes.count():
+    box = find_date_input(page)
+    if box is None:
         return
-    box = comboboxes.first
     try:
         if not box.is_visible():
             return
