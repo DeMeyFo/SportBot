@@ -831,7 +831,7 @@ def ensure_member_area(page):
         except Exception:
             pass
 
-def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email=None, password=None):
+def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_ahead=None, email=None, password=None):
     has_visible_text_fn = globals().get("has_visible_text")
     if has_visible_text_fn is None:
         def has_visible_text_fn(local_page, pattern):
@@ -883,12 +883,20 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
 
     open_kurse_view_recorded(page, email=email)
     close_blocking_overlays(page)
-    # Bei Wochentag-Buchungen auf "heute + TARGET_DAYS_AHEAD" gehen (Standard: +6 Tage).
-    # Ohne Wochentag auf heute.
-    days_ahead = TARGET_DAYS_AHEAD if weekday else 0
-    reset_kurse_date(page, days_ahead=days_ahead)
+    # Datum wird primär über das Datumsfeld gesteuert.
+    # Priorität:
+    # 1) explizit über CLI (--days-ahead)
+    # 2) bei weekday: TARGET_DAYS_AHEAD (Default +6)
+    # 3) sonst: heute
+    if days_ahead is not None:
+        effective_days_ahead = max(0, int(days_ahead))
+    else:
+        effective_days_ahead = TARGET_DAYS_AHEAD if weekday else 0
+    reset_kurse_date(page, days_ahead=effective_days_ahead)
     if weekday:
         maybe_go_to_next_week_for_weekday(page, weekday)
+    # Bei expliziter Datumssteuerung nie zusätzlich per "nächste Woche" springen.
+    allow_week_jump = days_ahead is None
 
     # 2) Wenn expliziter Slot-Name gesetzt ist: Wochentag fokussieren und dann den Slot klicken.
     course_btn = None
@@ -905,7 +913,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
-        elif (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
+        elif allow_week_jump and (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(400)
             course_btn = True
@@ -925,7 +933,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
                 course_btn = direct_course
         except Exception:
             course_btn = None
-        if course_btn is None and go_to_next_week(page):
+        if course_btn is None and allow_week_jump and go_to_next_week(page):
             direct_course = page.get_by_role(
                 "button",
                 name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE)
@@ -1014,7 +1022,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
         close_blocking_overlays(page)
         if slot_name and click_course_slot_by_name(page, slot_name, weekday=weekday):
             course_btn = True
-        elif slot_name and (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
+        elif slot_name and allow_week_jump and (not weekday) and go_to_next_week(page) and click_course_slot_by_name(page, slot_name, weekday=weekday):
             course_btn = True
         else:
             try:
@@ -1062,7 +1070,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, email
             try:
                 safe_click(course_btn, label="Course")
             except Exception:
-                if not go_to_next_week(page):
+                if not allow_week_jump or not go_to_next_week(page):
                     raise
                 course_btn = page.get_by_role(
                     "button",

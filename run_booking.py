@@ -13,6 +13,11 @@ def parse_args():
     parser.add_argument("--course", help="Course name for this run (one course per cronjob).")
     parser.add_argument("--slot", help="Optional exact slot label, e.g. 'BODYPUMP, 17:45 - 18:45'.")
     parser.add_argument("--weekday", help="Optional weekday filter, e.g. Mon/Tue or Montag/Dienstag.")
+    parser.add_argument(
+        "--days-ahead",
+        type=int,
+        help="Target date offset from today (e.g. 5 means today+5). Uses date field instead of weekday selection.",
+    )
     parser.add_argument("--email", help="Login email (overrides MYSPORTS_EMAIL).")
     parser.add_argument("--password", help="Login password (overrides MYSPORTS_PASSWORD).")
     parser.add_argument(
@@ -57,6 +62,7 @@ def main():
                     course_name=course,
                     weekday=args.weekday,
                     slot_name=args.slot,
+                    days_ahead=args.days_ahead,
                     email=args.email,
                     password=args.password,
                 )
