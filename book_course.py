@@ -626,7 +626,7 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
     # Wenn keine Spaltengrenzen erkannt wurden, versuchen wir trotzdem den Slot zu finden.
     # Das ist ein Fallback für Layout-Varianten auf VPS/Xvfb.
 
-    def try_click(locator, label, require_actions=False):
+    def try_click(locator, label, require_actions=True):
         count = locator.count()
         for i in range(min(count, 40)):
             item = locator.nth(i)
@@ -648,7 +648,7 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
                     continue
                 safe_click(item, label=label)
                 page.wait_for_timeout(250)
-                if has_booking_actions() or wait_for_booking_actions(page, timeout_ms=5000):
+                if has_booking_actions() or wait_for_booking_actions(page, timeout_ms=10000):
                     return True
                 if not require_actions:
                     # Klick gilt als erfolgreich; finale Validierung erfolgt später im Flow.
@@ -665,12 +665,12 @@ def click_course_slot_by_name(page, slot_name, weekday=None):
 
     # 1) Exakter/nahezu exakter Treffer im aria-label
     pattern = re.compile(rf"{re.escape(slot_name)}", re.IGNORECASE)
-    if try_click(page.get_by_role("button", name=pattern), label="CourseSlotName", require_actions=False):
+    if try_click(page.get_by_role("button", name=pattern), label="CourseSlotName", require_actions=True):
         return True
 
     # 2) Textsuche in Slot-Containern
     text_slots = page.locator("[role='button']").filter(has_text=re.compile(rf"{re.escape(slot_name)}", re.IGNORECASE))
-    if try_click(text_slots, label="CourseSlotText", require_actions=False):
+    if try_click(text_slots, label="CourseSlotText", require_actions=True):
         return True
 
     # 3) Fuzzy-Fallback: toleriert Namensabweichungen (Interpunktion, Leerzeichen, Groß/Kleinschreibung).
