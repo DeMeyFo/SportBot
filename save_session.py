@@ -61,7 +61,7 @@ def login_and_validate(page, email=None, password=None):
     if not login_email or not login_password:
         raise RuntimeError("❌ Login-Credentials fehlen. Setze MYSPORTS_EMAIL/MYSPORTS_PASSWORD oder übergebe --email/--password.")
 
-    page.goto(LOGIN_URL, wait_until="domcontentloaded")
+    page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
     try:
         page.wait_for_load_state("networkidle", timeout=15000)
     except PlaywrightTimeoutError:
@@ -127,7 +127,7 @@ def login_and_validate(page, email=None, password=None):
         )
 
     # Verifizieren, dass Session auf Home weiterhin gültig ist
-    page.goto(HOME_URL, wait_until="domcontentloaded")
+    page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_load_state("networkidle")
     if "login-register" in page.url:
         page.screenshot(path="mysports_login_invalid.png", full_page=True)

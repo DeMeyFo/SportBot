@@ -877,7 +877,7 @@ def login_if_needed(page, email=None, password=None):
     dismiss_cookie_banner(page)
 
 def open_member_page_from_business(page):
-    page.goto(BUSINESS_URL, wait_until="domcontentloaded")
+    page.goto(BUSINESS_URL, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_load_state("networkidle")
     dismiss_cookie_banner(page)
 
@@ -941,7 +941,7 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
     page.wait_for_timeout(500)
 
     if re.search(r"/business/", page.url, re.IGNORECASE):
-        page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(500)
         dismiss_cookie_banner(page)
