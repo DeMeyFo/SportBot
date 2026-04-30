@@ -4,7 +4,7 @@ import argparse
 import os
 from datetime import datetime
 
-from save_session import open_logged_in_context, STATE_FILE, HEADLESS
+from save_session import open_logged_in_context, STATE_FILE, HEADLESS, _state_file_for_email
 from book_course import run_booking_flow, COURSE_NAME
 
 
@@ -51,7 +51,9 @@ def main():
                 email=args.email,
                 password=args.password,
             )
-            context.storage_state(path=str(STATE_FILE))
+            effective_email = args.email or os.getenv("MYSPORTS_EMAIL", "")
+            state_file = _state_file_for_email(effective_email) if effective_email else STATE_FILE
+            context.storage_state(path=str(state_file))
             log("✅ Session gespeichert.")
 
             log("2/2 Starte Buchung ...")

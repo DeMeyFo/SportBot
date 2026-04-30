@@ -10,6 +10,17 @@ LOGIN_URL = "https://www.mysports.com/login-register?utm_source=google&utm_mediu
 HOME_URL = "https://www.mysports.com/"
 STATE_FILE = Path("mysports_state.json")
 PROFILE_DIR = Path(".mysports_profile")
+
+def _profile_dir_for_email(email: str) -> Path:
+    local = email.strip().lower().split("@")[0]
+    safe = re.sub(r"[^a-z0-9]", "_", local)
+    return Path(f".mysports_profile_{safe}")
+
+def _state_file_for_email(email: str) -> Path:
+    local = email.strip().lower().split("@")[0]
+    safe = re.sub(r"[^a-z0-9]", "_", local)
+    return Path(f"mysports_state_{safe}.json")
+
 VIEWPORT_WIDTH = int(os.getenv("MYSPORTS_VIEWPORT_WIDTH", "1920"))
 VIEWPORT_HEIGHT = int(os.getenv("MYSPORTS_VIEWPORT_HEIGHT", "1080"))
 HEADLESS = os.getenv("MYSPORTS_HEADLESS", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -51,10 +62,23 @@ def login_and_validate(page, email=None, password=None):
         raise RuntimeError("❌ Login-Credentials fehlen. Setze MYSPORTS_EMAIL/MYSPORTS_PASSWORD oder übergebe --email/--password.")
 
     page.goto(LOGIN_URL, wait_until="domcontentloaded")
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PlaywrightTimeoutError:
+        pass
     page.wait_for_timeout(500)
     dismiss_cookie_banner(page)
 
     if "login-register" in page.url:
+        # SPA rendert Login-Felder asynchron — warten bis Email-Input sichtbar ist.
+        try:
+            page.wait_for_selector(
+                "input[type='email'], input[name*='mail' i], input[id*='mail' i]",
+                timeout=12000,
+            )
+        except PlaywrightTimeoutError:
+            pass
+
         # Login (Fallback-Selektoren für Headless/Layout-Varianten)
         email_input = first_visible(
             page.get_by_role("textbox", name=re.compile(r"E-?Mail", re.IGNORECASE)),
@@ -116,8 +140,11 @@ def open_logged_in_context(playwright, headless=None, email=None, password=None)
     if headless is None:
         headless = HEADLESS
 
+    login_email = email or EMAIL
+    profile_dir = _profile_dir_for_email(login_email) if login_email else PROFILE_DIR
+
     launch_kwargs = dict(
-        user_data_dir=str(PROFILE_DIR),
+        user_data_dir=str(profile_dir),
         headless=headless,
         locale=LOCALE,
         timezone_id=TIMEZONE_ID,

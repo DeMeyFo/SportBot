@@ -1228,10 +1228,23 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                             return False
                     return is_kurse_view(page)
 
+                # Scroll nach unten: Kurse können lazy geladen / außerhalb des Viewports sein.
+                try:
+                    page.evaluate("window.scrollBy(0, 400)")
+                    page.wait_for_timeout(600)
+                except Exception:
+                    pass
+
                 candidates = page.get_by_role(
                     "button",
                     name=re.compile(rf"{re.escape(selected_course_name)}", re.IGNORECASE),
                 )
+                # Wenn das Grid leer wirkt: bis zu 3×1,5s warten (Seite lädt ggf. noch nach).
+                for _wait_retry in range(3):
+                    if candidates.count() > 0:
+                        break
+                    page.wait_for_timeout(1500)
+
                 for i in range(min(candidates.count(), 40)):
                     item = candidates.nth(i)
                     try:
@@ -1253,9 +1266,18 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                         continue
 
                 if course_btn is None:
+                    candidate_count = candidates.count()
                     page.screenshot(path="mysports_weekday_course_mismatch.png", full_page=True)
+                    if candidate_count == 0:
+                        raise RuntimeError(
+                            f"❌ Kursgitter leer: Kurs '{selected_course_name}' für Zieldatum {target_date_str} "
+                            "nicht gefunden. Schedule noch nicht veröffentlicht oder Filter aktiv? "
+                            "Screenshot: mysports_weekday_course_mismatch.png"
+                        )
                     raise RuntimeError(
-                        f"❌ Kurs '{selected_course_name}' wurde nicht eindeutig am Wochentag '{effective_weekday}' gefunden. "
+                        f"❌ Kurs '{selected_course_name}' am Wochentag '{effective_weekday}' "
+                        f"(Zieldatum {target_date_str}) nicht eindeutig gefunden "
+                        f"({candidate_count} Kandidat(en) geprüft, keiner am richtigen Datum). "
                         "Screenshot: mysports_weekday_course_mismatch.png"
                     )
         elif course_btn is None:
