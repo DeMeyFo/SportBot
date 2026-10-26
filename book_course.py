@@ -33,7 +33,7 @@ LOGIN_URL = _studio_path("login-register")
 HOME_URL = _studio_path("course")
 COURSE_URL = _studio_path("course")
 
-GYM_NAME = os.getenv("MYSPORTS_GYM", "all inclusive Fitness")
+GYM_NAME = os.getenv("MYSPORTS_GYM", "Ai Fitness Verden")
 COURSE_NAME = os.getenv("MYSPORTS_COURSE", "Kraft-Ausdauer Training")
 EMAIL = os.getenv("MYSPORTS_EMAIL")
 PASSWORD = os.getenv("MYSPORTS_PASSWORD")
@@ -492,6 +492,11 @@ def ensure_kurse_page(page):
 
     for _ in range(4):
         close_blocking_overlays(page)
+        # Falls auf der Studio-Auswahlseite gelandet: erst Zielstudio waehlen.
+        if is_studio_selection_view(page):
+            select_studio(page, GYM_NAME)
+            if wait_for_kurse_view(page, timeout_ms=8000):
+                return
         # Direkt auf die Kursplan-URL gehen - die Studio-ID steckt dort drin,
         # ein Tab-Klick ist auf dem neuen Portal nicht noetig.
         try:
@@ -502,6 +507,11 @@ def ensure_kurse_page(page):
             pass
         if wait_for_kurse_view(page, timeout_ms=8000):
             return
+        # Nach der URL-Navigation erneut auf Studio-Auswahl pruefen.
+        if is_studio_selection_view(page):
+            select_studio(page, GYM_NAME)
+            if wait_for_kurse_view(page, timeout_ms=8000):
+                return
 
         for loc in nav_candidates:
             count = loc.count()
@@ -1085,6 +1095,52 @@ def login_if_needed(page, email=None, password=None):
     page.wait_for_load_state("networkidle")
     dismiss_cookie_banner(page)
 
+def is_studio_selection_view(page):
+    # Das Portal faellt auf eine Studio-Auswahlseite (.../studios/<tenant>)
+    # zurueck, wenn das konkrete Studio nicht aus der Session bekannt ist
+    # (typisch beim frischen Profil auf dem VPS). Dort wird eine lange Liste
+    # aller Standorte angezeigt.
+    try:
+        if re.search(r"/studios\b", page.url, re.IGNORECASE):
+            return True
+    except Exception:
+        pass
+    return False
+
+def select_studio(page, studio_name=None):
+    # Waehlt auf der Studio-Auswahlseite das Zielstudio aus, damit wir zum
+    # Kursplan gelangen. Danach steuern wir sicherheitshalber die Kursplan-URL an.
+    name = (studio_name or GYM_NAME or "").strip()
+    if not name:
+        return False
+    dismiss_cookie_banner(page)
+    candidates = [
+        page.get_by_role("link", name=re.compile(re.escape(name), re.IGNORECASE)),
+        page.get_by_role("button", name=re.compile(re.escape(name), re.IGNORECASE)),
+        page.get_by_text(re.compile(re.escape(name), re.IGNORECASE)),
+    ]
+    for loc in candidates:
+        count = loc.count()
+        for i in range(min(count, 20)):
+            item = loc.nth(i)
+            try:
+                if not item.is_visible():
+                    continue
+                safe_click(item, label=f"SelectStudio:{name}")
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(800)
+                # Nach der Auswahl direkt auf den Kursplan des Studios.
+                if "course" not in page.url:
+                    try:
+                        page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=30000)
+                        page.wait_for_load_state("networkidle")
+                    except Exception:
+                        pass
+                return True
+            except Exception:
+                pass
+    return False
+
 def open_member_course_page(page, email=None, password=None):
     # Direkter Einstieg in den Kursplan ueber die Studio-URL.
     # Falls keine gueltige Session vorliegt, leitet das Portal auf
@@ -1107,6 +1163,11 @@ def open_member_course_page(page, email=None, password=None):
             except PlaywrightTimeoutError:
                 pass
             dismiss_cookie_banner(page)
+
+    # Falls das Portal auf die Studio-Auswahl zurueckgefallen ist: Studio waehlen.
+    if is_studio_selection_view(page):
+        select_studio(page, GYM_NAME)
+        page.wait_for_timeout(400)
     return page
 
 def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_ahead=None, target_date=None, email=None, password=None):
