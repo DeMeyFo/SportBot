@@ -525,6 +525,29 @@ def ensure_kurse_page(page):
         page.wait_for_timeout(500)
 
     page.screenshot(path="aifitness_kurse_view_missing.png", full_page=True)
+    # Diagnose-Ausgabe, um Umgebungsunterschiede (VPS vs. lokal) sichtbar zu machen.
+    try:
+        print(f"🔎 DIAG URL: {page.url}", flush=True)
+        print(f"🔎 DIAG Title: {page.title()}", flush=True)
+        try:
+            body_txt = page.locator("body").inner_text(timeout=3000)
+            body_txt = re.sub(r"\s+", " ", body_txt).strip()
+            print(f"🔎 DIAG sichtbarer Text (gekuerzt): {body_txt[:600]}", flush=True)
+        except Exception as e:
+            print(f"🔎 DIAG body-Text nicht lesbar: {e}", flush=True)
+        try:
+            n_buttons = page.get_by_role("button").count()
+            n_slots = (
+                page.locator("[role='button']")
+                .filter(has_text=re.compile(r"\b\d{1,2}:\d{2}\b"))
+                .count()
+            )
+            n_inputs = page.locator("input").count()
+            print(f"🔎 DIAG buttons={n_buttons} slot-like={n_slots} inputs={n_inputs}", flush=True)
+        except Exception as e:
+            print(f"🔎 DIAG Zaehlung fehlgeschlagen: {e}", flush=True)
+    except Exception:
+        pass
     raise RuntimeError(
         "❌ Kursansicht konnte nicht geöffnet werden. Screenshot: aifitness_kurse_view_missing.png"
     )
