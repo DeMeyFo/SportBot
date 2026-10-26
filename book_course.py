@@ -392,7 +392,17 @@ def has_visible_text(page, pattern):
 
 def is_kurse_view(page):
     # Die Kursansicht ist je nach Sprache/Viewport nicht immer identisch.
-    # Auf dem VPS sehen wir z. B. "Classes" + "Filters (1)" in Englisch.
+    # Beim AI-Fitness/Magicline-Portal landen wir direkt auf .../course und
+    # sehen die Kurs-Slots als Karten mit Uhrzeit. Die zuverlaessigste
+    # Erkennung ist daher die URL bzw. sichtbare Slot-Karten.
+    try:
+        if re.search(r"/course\b", page.url, re.IGNORECASE):
+            on_course_url = True
+        else:
+            on_course_url = False
+    except Exception:
+        on_course_url = False
+
     has_filter = has_visible_text(page, re.compile(r"^Filters?(\s*\(\d+\))?$", re.IGNORECASE))
     has_date_row = has_visible_text(
         page,
@@ -427,7 +437,15 @@ def is_kurse_view(page):
         )
     except Exception:
         pass
-    return has_filter or (has_date_row and has_date_input) or (has_classes_nav and has_date_row)
+    # Sichtbare Slot-Karten sind das staerkste Signal; die /course-URL mit
+    # Datumsfeld oder Kurse-Navigation genuegt ebenfalls.
+    return (
+        has_slot_cards
+        or has_filter
+        or (on_course_url and (has_date_input or has_classes_nav or has_date_row))
+        or (has_date_row and has_date_input)
+        or (has_classes_nav and has_date_row)
+    )
 
 def is_booking_options_view(page):
     if has_visible_text(page, re.compile(r"Buchungsoptionen|Booking options", re.IGNORECASE)):
@@ -639,29 +657,66 @@ def get_weekday_column_bounds(page, weekday):
     key = normalize_weekday(weekday)
     if not key:
         return None
-    pattern = weekday_ui_pattern(key)
-    candidates = [
-        page.get_by_role("tab", name=pattern),
-        page.get_by_role("button", name=pattern),
-        page.get_by_role("link", name=pattern),
-        page.get_by_text(pattern),
-    ]
-    for loc in candidates:
-        count = loc.count()
-        for i in range(min(count, 25)):
-            item = loc.nth(i)
+
+    # Das AI-Fitness/Magicline-Portal zeigt ein Wochen-Grid mit sieben
+    # Tagesspalten nebeneinander. Die Wochentag-Header (z. B. "Samstag") sind
+    # nur so breit wie das Wort selbst, die Kurs-Karten fuellen aber die ganze
+    # Spalte. Deshalb leiten wir die Spaltenbreite aus dem Abstand zum naechsten
+    # Header ab (gleichmaessiges Raster), statt aus der schmalen Textbreite.
+    headers = _collect_weekday_headers(page)
+    if not headers:
+        return None
+
+    # Rasterbreite = typischer Abstand zwischen zwei benachbarten Headern.
+    xs = sorted(h["x"] for h in headers.values())
+    gaps = [b - a for a, b in zip(xs, xs[1:]) if b - a > 0]
+    grid_w = min(gaps) if gaps else 260.0
+
+    target = headers.get(key)
+    if target is None:
+        return None
+
+    x_start = target["x"]
+    # Rechte Grenze = Start der naechsten Spalte (naechster Header rechts),
+    # sonst eine Rasterbreite weiter.
+    next_xs = [x for x in xs if x > x_start + 5]
+    x_end = min(next_xs) if next_xs else (x_start + grid_w)
+    # Kleine Toleranz nach links, damit linksbuendige Karten sicher zaehlen.
+    return (x_start - 8, x_end)
+
+
+def _collect_weekday_headers(page):
+    # Liefert {weekday_key: {"x":..., "y":..., "w":...}} der sichtbaren
+    # Wochentag-Header in der oberen Kalenderzeile.
+    found = {}
+    full_pattern = re.compile(
+        r"Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag|"
+        r"Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday",
+        re.IGNORECASE,
+    )
+    loc = page.get_by_text(full_pattern)
+    count = loc.count()
+    for i in range(min(count, 60)):
+        item = loc.nth(i)
+        try:
+            if not item.is_visible():
+                continue
+            text = (item.inner_text() or "").strip()
+            box = item.bounding_box()
+            if not box:
+                continue
+            # Header sitzen in der oberen Kalenderzeile.
+            if not (80 <= box["y"] <= 520):
+                continue
             try:
-                if not item.is_visible():
-                    continue
-                box = item.bounding_box()
-                if not box:
-                    continue
-                # Kopfzeile befindet sich oben.
-                if 80 <= box["y"] <= 520 and box["width"] >= 60:
-                    return (box["x"], box["x"] + box["width"])
+                key = normalize_weekday(text)
             except Exception:
-                pass
-    return None
+                continue
+            if key and key not in found:
+                found[key] = {"x": box["x"], "y": box["y"], "w": box["width"]}
+        except Exception:
+            pass
+    return found
 
 def click_course_in_weekday_column(page, course_name, weekday):
     bounds = get_weekday_column_bounds(page, weekday)
