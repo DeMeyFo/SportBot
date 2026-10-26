@@ -481,7 +481,7 @@ def is_kurse_loading_view(page):
     return False
 
 def ensure_kurse_page(page):
-    if is_kurse_view(page):
+    if wait_for_kurse_view(page, timeout_ms=12000):
         return
     nav_candidates = [
         page.locator("header a, nav a, [role='navigation'] a").filter(has_text=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
@@ -492,6 +492,17 @@ def ensure_kurse_page(page):
 
     for _ in range(4):
         close_blocking_overlays(page)
+        # Direkt auf die Kursplan-URL gehen - die Studio-ID steckt dort drin,
+        # ein Tab-Klick ist auf dem neuen Portal nicht noetig.
+        try:
+            if "course" not in page.url:
+                page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_load_state("networkidle")
+        except Exception:
+            pass
+        if wait_for_kurse_view(page, timeout_ms=8000):
+            return
+
         for loc in nav_candidates:
             count = loc.count()
             for i in range(min(count, 12)):
@@ -501,15 +512,13 @@ def ensure_kurse_page(page):
                         continue
                     safe_click(item, label="OpenKurse")
                     page.wait_for_load_state("networkidle")
-                    page.wait_for_timeout(500)
-                    if is_kurse_view(page):
+                    if wait_for_kurse_view(page, timeout_ms=6000):
                         return
                 except Exception:
                     try:
                         safe_click(item, label="OpenKurseForce", allow_force=True)
                         page.wait_for_load_state("networkidle")
-                        page.wait_for_timeout(500)
-                        if is_kurse_view(page):
+                        if wait_for_kurse_view(page, timeout_ms=6000):
                             return
                     except Exception:
                         pass
@@ -519,6 +528,24 @@ def ensure_kurse_page(page):
     raise RuntimeError(
         "❌ Kursansicht konnte nicht geöffnet werden. Screenshot: aifitness_kurse_view_missing.png"
     )
+
+
+def wait_for_kurse_view(page, timeout_ms=12000):
+    # Wartet aktiv, bis die Kursansicht gerendert ist. Wichtig auf dem headless
+    # VPS, wo die SPA nach dem Login spuerbar langsamer nachlaedt als lokal.
+    waited = 0
+    step = 500
+    while waited < timeout_ms:
+        # Ladespinner zuerst abwarten.
+        if is_kurse_loading_view(page):
+            page.wait_for_timeout(step)
+            waited += step
+            continue
+        if is_kurse_view(page):
+            return True
+        page.wait_for_timeout(step)
+        waited += step
+    return is_kurse_view(page)
 
 def open_kurse_view_recorded(page, email=None):
     # 1) Avatar-Menü öffnen (laut Codegen häufig nötig, damit Kurse-Link sichtbar wird)
