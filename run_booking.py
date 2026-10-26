@@ -18,6 +18,10 @@ def parse_args():
         type=int,
         help="Target date offset from today (e.g. 5 means today+5). Uses date field instead of weekday selection.",
     )
+    parser.add_argument(
+        "--date",
+        help="Exact target date as DD.MM.YYYY (e.g. 02.11.2026). Takes precedence over --days-ahead and is robust against a wrong system clock.",
+    )
     parser.add_argument("--email", help="Login email (overrides MYSPORTS_EMAIL).")
     parser.add_argument("--password", help="Login password (overrides MYSPORTS_PASSWORD).")
     parser.add_argument(
@@ -65,6 +69,7 @@ def main():
                     weekday=args.weekday,
                     slot_name=args.slot,
                     days_ahead=args.days_ahead,
+                    target_date=args.date,
                     email=args.email,
                     password=args.password,
                 )

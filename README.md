@@ -1,6 +1,12 @@
 # SportBot
 
-Automatisiert MySports-Kursbuchungen mit Playwright auf einem Debian/Ubuntu VPS.
+Automatisiert Kursbuchungen auf der AI-Fitness / Magicline Member-Plattform
+(`dein.ai-fitness.de`) mit Playwright auf einem Debian/Ubuntu VPS.
+
+> Hinweis zum Umzug: Das Studio ist von `www.mysports.com` auf eine gebrandete
+> Magicline-Instanz unter `dein.ai-fitness.de` umgezogen. Basis-URL und Studio-ID
+> werden ueber `.env` konfiguriert (`AIFITNESS_BASE_URL`, `AIFITNESS_STUDIO_ID`),
+> sodass ein weiterer Umzug nur eine Konfigaenderung erfordert.
 
 ## Einrichtung auf dem VPS
 
@@ -37,16 +43,22 @@ pip install playwright python-dotenv
 python -m playwright install --with-deps chromium
 ```
 
-### 4) Optional: `.env` anlegen
+### 4) `.env` anlegen
 
 ```bash
 cd /home/dennis/SportBot
 cat > .env <<'ENV'
-MYSPORTS_GYM=EASYFITNESS Verden
+MYSPORTS_GYM=all inclusive Fitness
 MYSPORTS_LOCALE=de-DE
 MYSPORTS_TIMEZONE=Europe/Berlin
+
+# AI-Fitness / Magicline Member-Plattform
+AIFITNESS_BASE_URL=https://dein.ai-fitness.de
+AIFITNESS_STUDIO_ID=YmVzdGZpdDoyMzYwODA3NTQw
 ENV
 ```
+
+`AIFITNESS_STUDIO_ID` ist der Teil aus der Portal-URL: `/studio/<STUDIO_ID>/course`.
 
 `MYSPORTS_EMAIL` und `MYSPORTS_PASSWORD` koennen in `.env` stehen, werden aber hier meist direkt per CLI uebergeben.
 

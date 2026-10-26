@@ -181,8 +181,16 @@ cython_debug/
 .cursorindexingignore
 
 # Project runtime artifacts
+.aifitness_profile/
+.aifitness_profile_*/
+aifitness_state.json
+aifitness_state_*.json
+aifitness_*.png
+# Altbestand (mysports) weiterhin ignorieren
 .mysports_profile/
+.mysports_profile_*/
 mysports_state.json
+mysports_state_*.json
 mysports_*.png
 booking_*.log
 booking_*.err.log

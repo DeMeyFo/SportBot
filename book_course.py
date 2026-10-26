@@ -10,13 +10,30 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 load_dotenv()
 
-STATE_FILE = Path("mysports_state.json")
-PROFILE_DIR = Path(".mysports_profile")
-BUSINESS_URL = "https://www.mysports.com/business/de"
-LOGIN_URL = "https://www.mysports.com/login-register?utm_source=google&utm_medium=organic"
-HOME_URL = "https://www.mysports.com/"
+# --- AI-Fitness / Magicline Member-Plattform ---------------------------------
+# Umzug von www.mysports.com auf eine gebrandete Magicline-Instanz.
+# Basis-URL und Studio-ID kommen aus der .env (siehe save_session.py).
+BASE_URL = os.getenv("AIFITNESS_BASE_URL", "https://dein.ai-fitness.de").rstrip("/")
+STUDIO_ID = os.getenv("AIFITNESS_STUDIO_ID", "")
+BASE_HOST = re.sub(r"^https?://", "", BASE_URL).split("/")[0]
 
-GYM_NAME = os.getenv("MYSPORTS_GYM", "EASYFITNESS Verden")
+
+def _studio_path(suffix: str) -> str:
+    suffix = suffix.lstrip("/")
+    if STUDIO_ID:
+        return f"{BASE_URL}/studio/{STUDIO_ID}/{suffix}"
+    return f"{BASE_URL}/{suffix}"
+
+
+STATE_FILE = Path("aifitness_state.json")
+PROFILE_DIR = Path(".aifitness_profile")
+# Direkter Einstieg in den Kursplan - der alte Umweg ueber die Business-Seite
+# entfaellt, weil die Studio-ID direkt in der URL steckt.
+LOGIN_URL = _studio_path("login-register")
+HOME_URL = _studio_path("course")
+COURSE_URL = _studio_path("course")
+
+GYM_NAME = os.getenv("MYSPORTS_GYM", "all inclusive Fitness")
 COURSE_NAME = os.getenv("MYSPORTS_COURSE", "Kraft-Ausdauer Training")
 EMAIL = os.getenv("MYSPORTS_EMAIL")
 PASSWORD = os.getenv("MYSPORTS_PASSWORD")
@@ -132,6 +149,10 @@ def is_booking_success_view(page, weekday=None):
         has_visible_text(page, re.compile(r"Du hast diesen Termin gebucht", re.IGNORECASE))
         or has_visible_text(page, re.compile(r"You have booked (this )?(appointment|event)", re.IGNORECASE))
         or has_visible_text(page, re.compile(r"Zu meinen Terminbuchungen|My bookings|My appointments", re.IGNORECASE))
+        # Weitere Magicline/AI-Fitness-Bestaetigungstexte (defensiv).
+        or has_visible_text(page, re.compile(r"Buchung (erfolgreich|best[äa]tigt)|erfolgreich gebucht", re.IGNORECASE))
+        or has_visible_text(page, re.compile(r"Booking (successful|confirmed)|successfully booked", re.IGNORECASE))
+        or has_visible_text(page, re.compile(r"Termin(buchung)? best[äa]tigt", re.IGNORECASE))
     )
     if not success:
         return False
@@ -316,6 +337,22 @@ def reset_kurse_date(page, days_ahead=0):
     except Exception:
         pass
 
+def set_exact_kurse_date(page, date_str):
+    # Setzt ein konkretes Datum (TT.MM.JJJJ) in das Kursplan-Datumsfeld.
+    # Unabhaengig von der Systemuhr - wird fuer --date genutzt.
+    box = find_date_input(page)
+    if box is None:
+        return
+    try:
+        if not box.is_visible():
+            return
+        box.fill(date_str)
+        box.press("Enter")
+        page.wait_for_timeout(500)
+        wait_until_not_busy(page, timeout_ms=10000)
+    except Exception:
+        pass
+
 def wait_for_booking_actions(page, timeout_ms=20000):
     patterns = [
         re.compile(r"Kostenfrei|Free", re.IGNORECASE),
@@ -460,9 +497,9 @@ def ensure_kurse_page(page):
                         pass
         page.wait_for_timeout(500)
 
-    page.screenshot(path="mysports_kurse_view_missing.png", full_page=True)
+    page.screenshot(path="aifitness_kurse_view_missing.png", full_page=True)
     raise RuntimeError(
-        "❌ Kursansicht konnte nicht geöffnet werden. Screenshot: mysports_kurse_view_missing.png"
+        "❌ Kursansicht konnte nicht geöffnet werden. Screenshot: aifitness_kurse_view_missing.png"
     )
 
 def open_kurse_view_recorded(page, email=None):
@@ -592,10 +629,10 @@ def focus_weekday(page, weekday):
     if get_weekday_column_bounds(page, weekday):
         return
 
-    page.screenshot(path="mysports_weekday_not_found.png", full_page=True)
+    page.screenshot(path="aifitness_weekday_not_found.png", full_page=True)
     raise RuntimeError(
         f"❌ Gewünschter Wochentag '{weekday}' nicht auswählbar. "
-        "Screenshot: mysports_weekday_not_found.png"
+        "Screenshot: aifitness_weekday_not_found.png"
     )
 
 def get_weekday_column_bounds(page, weekday):
@@ -858,6 +895,38 @@ def dismiss_cookie_banner(page):
         except Exception:
             pass
 
+def first_visible(*locators):
+    for loc in locators:
+        try:
+            if loc.count() and loc.first.is_visible():
+                return loc.first
+        except Exception:
+            pass
+    return None
+
+def open_login_form(page):
+    # Auf der AI-Fitness/Magicline-Plattform blendet /login-register zuerst nur
+    # einen Link "Registrieren / Einloggen" ein. Erst ein Klick darauf zeigt das
+    # eigentliche E-Mail-/Passwort-Formular.
+    for _ in range(2):
+        try:
+            if page.locator("input[type='email'], input[type='password']").first.is_visible():
+                return
+        except Exception:
+            pass
+        link = first_visible(
+            page.get_by_role("link", name=re.compile(r"Registrieren\s*/\s*Einloggen|Einloggen|Login|Sign in", re.IGNORECASE)),
+            page.get_by_role("button", name=re.compile(r"Registrieren\s*/\s*Einloggen|Einloggen|Login|Sign in", re.IGNORECASE)),
+        )
+        if link is None:
+            return
+        try:
+            link.click(timeout=4000)
+            page.wait_for_timeout(600)
+            dismiss_cookie_banner(page)
+        except Exception:
+            return
+
 def login_if_needed(page, email=None, password=None):
     dismiss_cookie_banner(page)
     if "login-register" not in page.url:
@@ -866,59 +935,76 @@ def login_if_needed(page, email=None, password=None):
     login_password = password or PASSWORD
     if not login_email or not login_password:
         raise RuntimeError("❌ Login-Credentials fehlen. Setze MYSPORTS_EMAIL/MYSPORTS_PASSWORD oder übergebe --email/--password.")
-    page.get_by_role("textbox", name=re.compile(r"E-Mail", re.IGNORECASE)).fill(login_email)
-    page.get_by_role("textbox", name=re.compile(r"Passwort", re.IGNORECASE)).fill(login_password)
-    page.get_by_role("button", name=re.compile(r"^Login$", re.IGNORECASE)).click()
+
+    # Formular aufklappen und auf E-Mail-Feld warten (SPA rendert asynchron).
+    open_login_form(page)
     try:
-        page.wait_for_url(re.compile(r"mysports\\.com/(?!login-register)"), timeout=45000)
+        page.wait_for_selector(
+            "input[type='email'], input[name*='mail' i], input[id*='mail' i]",
+            timeout=12000,
+        )
+    except PlaywrightTimeoutError:
+        pass
+
+    email_input = first_visible(
+        page.get_by_role("textbox", name=re.compile(r"E-?Mail", re.IGNORECASE)),
+        page.locator("input[type='email']"),
+        page.locator("input[name*='mail' i]"),
+        page.locator("input[id*='mail' i]"),
+    )
+    password_input = first_visible(
+        page.get_by_role("textbox", name=re.compile(r"Passwort|Password", re.IGNORECASE)),
+        page.locator("input[type='password']"),
+        page.locator("input[name*='pass' i]"),
+        page.locator("input[id*='pass' i]"),
+    )
+    login_button = first_visible(
+        page.get_by_role("button", name=re.compile(r"^Login$|Sign in|Anmelden", re.IGNORECASE)),
+        page.locator("button:has-text('Login')"),
+        page.locator("button[type='submit']"),
+    )
+
+    if not email_input or not password_input or not login_button:
+        page.screenshot(path="aifitness_login_fields_missing.png", full_page=True)
+        raise RuntimeError(
+            "❌ Login-Felder/Button nicht gefunden. Screenshot: aifitness_login_fields_missing.png"
+        )
+
+    email_input.fill(login_email)
+    password_input.fill(login_password)
+    login_button.click()
+    try:
+        page.wait_for_url(re.compile(r"/(?!login-register)[^/]*$"), timeout=45000)
     except PlaywrightTimeoutError:
         pass
     page.wait_for_load_state("networkidle")
     dismiss_cookie_banner(page)
 
-def open_member_page_from_business(page):
-    page.goto(BUSINESS_URL, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_load_state("networkidle")
-    dismiss_cookie_banner(page)
-
-    login_btn = page.get_by_role("button", name=re.compile(r"^login$|log in|sign in", re.IGNORECASE))
-    if not (login_btn.count() and login_btn.first.is_visible()):
-        return page
-
-    popup_page = None
+def open_member_course_page(page, email=None, password=None):
+    # Direkter Einstieg in den Kursplan ueber die Studio-URL.
+    # Falls keine gueltige Session vorliegt, leitet das Portal auf
+    # .../login-register um; dort melden wir uns an und kehren zum Kursplan zurueck.
+    page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=60000)
     try:
-        with page.expect_popup(timeout=5000) as popup_info:
-            login_btn.first.click(timeout=3000)
-        popup_page = popup_info.value
-        popup_page.wait_for_load_state("domcontentloaded")
-        popup_page.wait_for_load_state("networkidle")
-        dismiss_cookie_banner(popup_page)
-        return popup_page
-    except Exception:
-        return page
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PlaywrightTimeoutError:
+        pass
+    dismiss_cookie_banner(page)
+    page.wait_for_timeout(400)
 
-def ensure_member_area(page):
-    # Wenn wir auf der Marketing-/Business-Seite landen, zuerst Login öffnen.
-    if not re.search(r"/business/", page.url, re.IGNORECASE):
-        return
+    if "login-register" in page.url:
+        login_if_needed(page, email=email, password=password)
+        # Nach dem Login sicher zuruck auf den Kursplan navigieren.
+        if "course" not in page.url:
+            page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=60000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass
+            dismiss_cookie_banner(page)
+    return page
 
-    login_candidates = [
-        page.get_by_role("button", name=re.compile(r"^login$|log in|sign in", re.IGNORECASE)),
-        page.get_by_role("link", name=re.compile(r"^login$|log in|sign in", re.IGNORECASE)),
-        page.get_by_role("button", name=re.compile(r"los geht|jetzt loslegen|member", re.IGNORECASE)),
-        page.get_by_role("link", name=re.compile(r"los geht|jetzt loslegen|member", re.IGNORECASE)),
-    ]
-    for loc in login_candidates:
-        try:
-            if loc.count() and loc.first.is_visible():
-                loc.first.click(timeout=4000)
-                page.wait_for_load_state("domcontentloaded")
-                page.wait_for_timeout(700)
-                break
-        except Exception:
-            pass
-
-def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_ahead=None, email=None, password=None):
+def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_ahead=None, target_date=None, email=None, password=None):
     has_visible_text_fn = globals().get("has_visible_text")
     if has_visible_text_fn is None:
         def has_visible_text_fn(local_page, pattern):
@@ -933,42 +1019,24 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
             return False
 
     selected_course_name = course_name or COURSE_NAME
-    page = open_member_page_from_business(page)
+    # Direkter Einstieg in den Kursplan (inkl. Login bei Bedarf).
+    page = open_member_course_page(page, email=email, password=password)
     page.wait_for_timeout(500)
-    ensure_member_area(page)
     dismiss_cookie_banner(page)
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(500)
-
-    if re.search(r"/business/", page.url, re.IGNORECASE):
-        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(500)
-        dismiss_cookie_banner(page)
-        login_if_needed(page, email=email, password=password)
 
     if "login-register" in page.url:
         login_if_needed(page, email=email, password=password)
 
     if "login-register" in page.url:
-        page.screenshot(path="mysports_auth_required.png", full_page=True)
+        page.screenshot(path="aifitness_auth_required.png", full_page=True)
         raise RuntimeError(
             "❌ Login in Schritt 2 weiterhin auf `login-register` (vermutlich Cookie/Captcha/zusätzliche Bestätigung). "
             "Bitte Screenshot prüfen und ggf. Login einmal manuell im offenen Fenster abschließen. "
-            "(Screenshot: mysports_auth_required.png)"
+            "(Screenshot: aifitness_auth_required.png)"
         )
 
-    # 1) Studio auswählen (wenn Auswahl angezeigt wird)
-    gym = page.get_by_text(GYM_NAME)
-    try:
-        gym.wait_for(state="visible", timeout=8000)
-        gym.first.click()
-        page.wait_for_load_state("domcontentloaded")
-        page.wait_for_timeout(800)
-    except Exception:
-        pass  # schon ausgewählt oder keine Auswahlseite
-
-    open_kurse_view_recorded(page, email=email)
+    # Die Studio-ID steckt bereits in der URL - der Kursplan wird direkt
+    # angesteuert, ein separater Studio-Auswahlschritt entfaellt.
     close_blocking_overlays(page)
     # Datum wird primär über das Datumsfeld gesteuert.
     # Priorität:
@@ -976,28 +1044,46 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
     # 2) bei weekday: TARGET_DAYS_AHEAD (Default +6)
     # 3) sonst: heute
     target_weekday_key = None
-    if days_ahead is not None:
-        effective_days_ahead = max(0, int(days_ahead))
+    target_dt = None
+    use_exact_date = False
+    effective_days_ahead = 0
+
+    if target_date:
+        # Exaktes Datum hat Vorrang (robust gegen abweichende Systemuhr).
+        try:
+            target_dt = datetime.strptime(target_date.strip(), "%d.%m.%Y")
+            target_date_str = target_dt.strftime("%d.%m.%Y")
+            target_weekday_key = WEEKDAY_BY_INDEX.get(target_dt.weekday())
+            use_exact_date = True
+        except Exception:
+            raise RuntimeError(f"❌ Ungültiges --date Format: '{target_date}'. Erwartet TT.MM.JJJJ.")
     else:
-        effective_days_ahead = TARGET_DAYS_AHEAD if weekday else 0
-    try:
-        from datetime import timedelta
-        target_dt = datetime.now(ZoneInfo(TIMEZONE_ID)) + timedelta(days=effective_days_ahead)
-        target_weekday_key = WEEKDAY_BY_INDEX.get(target_dt.weekday())
-        target_date_str = target_dt.strftime("%d.%m.%Y")
-    except Exception:
-        target_date_str = "unbekannt"
+        if days_ahead is not None:
+            effective_days_ahead = max(0, int(days_ahead))
+        else:
+            effective_days_ahead = TARGET_DAYS_AHEAD if weekday else 0
+        try:
+            from datetime import timedelta
+            target_dt = datetime.now(ZoneInfo(TIMEZONE_ID)) + timedelta(days=effective_days_ahead)
+            target_weekday_key = WEEKDAY_BY_INDEX.get(target_dt.weekday())
+            target_date_str = target_dt.strftime("%d.%m.%Y")
+        except Exception:
+            target_date_str = "unbekannt"
+
     effective_weekday = weekday or target_weekday_key
-    print(f"🎯 Zieldatum: {target_date_str} (days_ahead={effective_days_ahead})")
+    print(f"🎯 Zieldatum: {target_date_str}" + ("" if use_exact_date else f" (days_ahead={effective_days_ahead})"))
     if effective_weekday:
         print(f"🎯 Ziel-Wochentag: {effective_weekday}")
     ensure_kurse_page(page)
-    reset_kurse_date(page, days_ahead=effective_days_ahead)
+    if use_exact_date:
+        set_exact_kurse_date(page, target_date_str)
+    else:
+        reset_kurse_date(page, days_ahead=effective_days_ahead)
     ensure_kurse_page(page)
     if effective_weekday:
         maybe_go_to_next_week_for_weekday(page, effective_weekday)
     # Bei expliziter Datumssteuerung nie zusätzlich per "nächste Woche" springen.
-    allow_week_jump = days_ahead is None
+    allow_week_jump = days_ahead is None and not use_exact_date
 
     # 2) Wenn expliziter Slot-Name gesetzt ist: Wochentag fokussieren und dann den Slot klicken.
     course_btn = None
@@ -1109,10 +1195,10 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                     pass
 
         if not clicked:
-            page.screenshot(path="mysports_error.png", full_page=True)
+            page.screenshot(path="aifitness_error.png", full_page=True)
             raise RuntimeError(
                 "❌ 'Kurse' nicht gefunden/unsichtbar. "
-                f"Screenshot: mysports_error.png | URL: {page.url}"
+                f"Screenshot: aifitness_error.png | URL: {page.url}"
             )
 
         page.wait_for_load_state("networkidle")
@@ -1136,10 +1222,10 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
 
         # Wenn ein expliziter Slot-Name gesetzt ist, hier nicht auf Kursnamen zurückfallen.
         if course_btn is None and slot_name:
-            page.screenshot(path="mysports_slot_not_found.png", full_page=True)
+            page.screenshot(path="aifitness_slot_not_found.png", full_page=True)
             raise RuntimeError(
                 f"❌ Slot nicht gefunden: '{slot_name}' am Zieldatum {target_date_str}. "
-                "Screenshot: mysports_slot_not_found.png"
+                "Screenshot: aifitness_slot_not_found.png"
             )
 
         # Wenn Wochentag gesetzt ist, versuche zuerst Kombination aus Tag+Kurs im Label.
@@ -1267,18 +1353,18 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
 
                 if course_btn is None:
                     candidate_count = candidates.count()
-                    page.screenshot(path="mysports_weekday_course_mismatch.png", full_page=True)
+                    page.screenshot(path="aifitness_weekday_course_mismatch.png", full_page=True)
                     if candidate_count == 0:
                         raise RuntimeError(
                             f"❌ Kursgitter leer: Kurs '{selected_course_name}' für Zieldatum {target_date_str} "
                             "nicht gefunden. Schedule noch nicht veröffentlicht oder Filter aktiv? "
-                            "Screenshot: mysports_weekday_course_mismatch.png"
+                            "Screenshot: aifitness_weekday_course_mismatch.png"
                         )
                     raise RuntimeError(
                         f"❌ Kurs '{selected_course_name}' am Wochentag '{effective_weekday}' "
                         f"(Zieldatum {target_date_str}) nicht eindeutig gefunden "
                         f"({candidate_count} Kandidat(en) geprüft, keiner am richtigen Datum). "
-                        "Screenshot: mysports_weekday_course_mismatch.png"
+                        "Screenshot: aifitness_weekday_course_mismatch.png"
                     )
         elif course_btn is None:
             course_btn = page.get_by_role(
@@ -1302,10 +1388,10 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
             stabilize_kurse_view(page)
 
     if not is_kurse_view(page) and not is_booking_options_view(page):
-        page.screenshot(path="mysports_not_in_kurse_view.png", full_page=True)
+        page.screenshot(path="aifitness_not_in_kurse_view.png", full_page=True)
         raise RuntimeError(
             "❌ Weder Kursansicht noch Buchungsoptionen aktiv. "
-            "Screenshot: mysports_not_in_kurse_view.png"
+            "Screenshot: aifitness_not_in_kurse_view.png"
         )
 
     # Schutz: falscher Flow (Probetraining) statt Kursbuchung.
@@ -1315,10 +1401,10 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
         or has_visible_text_fn(page, re.compile(r"Welches Datum m[oö]chtest du ausw[aä]hlen\?", re.IGNORECASE))
     )
     if is_probetraining_flow:
-        page.screenshot(path="mysports_wrong_flow_probetraining.png", full_page=True)
+        page.screenshot(path="aifitness_wrong_flow_probetraining.png", full_page=True)
         raise RuntimeError(
             "❌ Falscher Flow erkannt (Probetraining statt Kursbuchung). "
-            "Screenshot: mysports_wrong_flow_probetraining.png"
+            "Screenshot: aifitness_wrong_flow_probetraining.png"
         )
 
     close_blocking_overlays(page)
@@ -1360,10 +1446,10 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
                 weekday_info = f" ({weekday})" if weekday else ""
                 print(f"✅ Buchung bestätigt: {label}{weekday_info}")
                 return
-            page.screenshot(path="mysports_booking_actions_timeout.png", full_page=True)
+            page.screenshot(path="aifitness_booking_actions_timeout.png", full_page=True)
             raise RuntimeError(
                 "❌ Buchungsdialog nicht rechtzeitig geladen. "
-                "Screenshot: mysports_booking_actions_timeout.png"
+                "Screenshot: aifitness_booking_actions_timeout.png"
             )
 
     # 5) Kostenfrei/Weiter/Jetzt buchen
@@ -1435,21 +1521,21 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
             return
         sold_out = has_visible_text_fn(page, re.compile(r"Ausgebucht|Fully booked", re.IGNORECASE))
         if in_booking_dialog and sold_out:
-            page.screenshot(path="mysports_booking_sold_out.png", full_page=True)
+            page.screenshot(path="aifitness_booking_sold_out.png", full_page=True)
             raise RuntimeError(
                 "❌ Kurs ist ausgebucht und kein Wartelisten-Button verfügbar. "
-                "Screenshot: mysports_booking_sold_out.png"
+                "Screenshot: aifitness_booking_sold_out.png"
             )
         if not in_booking_dialog:
-            page.screenshot(path="mysports_booking_dialog_missing.png", full_page=True)
+            page.screenshot(path="aifitness_booking_dialog_missing.png", full_page=True)
             raise RuntimeError(
                 "❌ Nicht im Buchungsdialog gelandet (keine Buchungsoptionen/Zusammenfassung erkannt). "
-                "Screenshot: mysports_booking_dialog_missing.png"
+                "Screenshot: aifitness_booking_dialog_missing.png"
             )
-        page.screenshot(path="mysports_booking_submit_missing.png", full_page=True)
+        page.screenshot(path="aifitness_booking_submit_missing.png", full_page=True)
         raise RuntimeError(
             "❌ Abschluss-Button nicht gefunden (Jetzt buchen/Buchen). "
-            "Screenshot: mysports_booking_submit_missing.png"
+            "Screenshot: aifitness_booking_submit_missing.png"
         )
 
     # Nach Abschluss-Klick nur mit echter Bestätigung als Erfolg werten.
@@ -1460,10 +1546,27 @@ def run_booking_flow(page, course_name=None, weekday=None, slot_name=None, days_
         print(f"✅ Buchung bestätigt: {label}{weekday_info}")
         return
 
-    page.screenshot(path="mysports_booking_unconfirmed.png", full_page=True)
+    # Buchungsfenster noch nicht offen: Portal nennt den frühesten Buchungszeitpunkt.
+    too_early = has_visible_text_fn(
+        page,
+        re.compile(r"kannst diesen Kurs fr[üu]hestens am .* buchen", re.IGNORECASE),
+    ) or has_visible_text_fn(
+        page,
+        re.compile(r"can only book this .* from|earliest.*book", re.IGNORECASE),
+    )
+    if too_early:
+        page.screenshot(path="aifitness_booking_too_early.png", full_page=True)
+        raise RuntimeError(
+            "⏳ Buchungsfenster noch nicht geöffnet. Das Portal gibt diesen Kurs erst zu "
+            "einem späteren Zeitpunkt frei (siehe Meldung auf der Seite, i. d. R. 6 Tage "
+            "vorher auf die Minute). Bot zum Freischaltzeitpunkt erneut ausführen. "
+            "Screenshot: aifitness_booking_too_early.png"
+        )
+
+    page.screenshot(path="aifitness_booking_unconfirmed.png", full_page=True)
     raise RuntimeError(
         "❌ Abschluss geklickt, aber keine Buchungsbestätigung erkannt. "
-        "Screenshot: mysports_booking_unconfirmed.png"
+        "Screenshot: aifitness_booking_unconfirmed.png"
     )
 
     page.wait_for_timeout(1500)
@@ -1498,8 +1601,8 @@ def main():
             run_booking_flow(page)
         except Exception:
             try:
-                page.screenshot(path="mysports_error.png", full_page=True)
-                print("📸 Screenshot gespeichert: mysports_error.png", file=sys.stderr)
+                page.screenshot(path="aifitness_error.png", full_page=True)
+                print("📸 Screenshot gespeichert: aifitness_error.png", file=sys.stderr)
                 print("Aktuelle URL:", page.url, file=sys.stderr)
             except Exception:
                 pass

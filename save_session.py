@@ -6,20 +6,38 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 load_dotenv()
 
-LOGIN_URL = "https://www.mysports.com/login-register?utm_source=google&utm_medium=organic"
-HOME_URL = "https://www.mysports.com/"
-STATE_FILE = Path("mysports_state.json")
-PROFILE_DIR = Path(".mysports_profile")
+# --- AI-Fitness / Magicline Member-Plattform ---------------------------------
+# Die Seite ist von www.mysports.com auf eine gebrandete Magicline-Instanz
+# umgezogen. Basis-URL und Studio-ID kommen aus der .env, damit ein erneuter
+# Umzug nur eine Konfigaenderung erfordert.
+BASE_URL = os.getenv("AIFITNESS_BASE_URL", "https://dein.ai-fitness.de").rstrip("/")
+STUDIO_ID = os.getenv("AIFITNESS_STUDIO_ID", "")
+
+# Host (z. B. "dein.ai-fitness.de") fuer URL-Validierungen nach dem Login.
+BASE_HOST = re.sub(r"^https?://", "", BASE_URL).split("/")[0]
+
+
+def _studio_path(suffix: str) -> str:
+    suffix = suffix.lstrip("/")
+    if STUDIO_ID:
+        return f"{BASE_URL}/studio/{STUDIO_ID}/{suffix}"
+    return f"{BASE_URL}/{suffix}"
+
+
+LOGIN_URL = _studio_path("login-register")
+HOME_URL = _studio_path("course")
+STATE_FILE = Path("aifitness_state.json")
+PROFILE_DIR = Path(".aifitness_profile")
 
 def _profile_dir_for_email(email: str) -> Path:
     local = email.strip().lower().split("@")[0]
     safe = re.sub(r"[^a-z0-9]", "_", local)
-    return Path(f".mysports_profile_{safe}")
+    return Path(f".aifitness_profile_{safe}")
 
 def _state_file_for_email(email: str) -> Path:
     local = email.strip().lower().split("@")[0]
     safe = re.sub(r"[^a-z0-9]", "_", local)
-    return Path(f"mysports_state_{safe}.json")
+    return Path(f"aifitness_state_{safe}.json")
 
 VIEWPORT_WIDTH = int(os.getenv("MYSPORTS_VIEWPORT_WIDTH", "1920"))
 VIEWPORT_HEIGHT = int(os.getenv("MYSPORTS_VIEWPORT_HEIGHT", "1080"))
@@ -54,6 +72,29 @@ def dismiss_cookie_banner(page):
         except Exception:
             pass
 
+def open_login_form(page):
+    # Auf der AI-Fitness/Magicline-Plattform zeigt /login-register zunaechst nur
+    # einen Link "Registrieren / Einloggen". Erst ein Klick darauf blendet das
+    # eigentliche E-Mail-/Passwort-Formular ein.
+    for _ in range(2):
+        try:
+            if page.locator("input[type='email'], input[type='password']").first.is_visible():
+                return
+        except Exception:
+            pass
+        link = first_visible(
+            page.get_by_role("link", name=re.compile(r"Registrieren\s*/\s*Einloggen|Einloggen|Login|Sign in", re.IGNORECASE)),
+            page.get_by_role("button", name=re.compile(r"Registrieren\s*/\s*Einloggen|Einloggen|Login|Sign in", re.IGNORECASE)),
+        )
+        if link is None:
+            return
+        try:
+            link.click(timeout=4000)
+            page.wait_for_timeout(600)
+            dismiss_cookie_banner(page)
+        except Exception:
+            return
+
 def login_and_validate(page, email=None, password=None):
     login_email = email or EMAIL
     login_password = password or PASSWORD
@@ -70,6 +111,8 @@ def login_and_validate(page, email=None, password=None):
     dismiss_cookie_banner(page)
 
     if "login-register" in page.url:
+        # Zuerst das Login-Formular aufklappen (Link "Registrieren / Einloggen").
+        open_login_form(page)
         # SPA rendert Login-Felder asynchron — warten bis Email-Input sichtbar ist.
         try:
             page.wait_for_selector(
@@ -99,9 +142,9 @@ def login_and_validate(page, email=None, password=None):
         )
 
         if not email_input or not password_input or not login_button:
-            page.screenshot(path="mysports_login_fields_missing.png", full_page=True)
+            page.screenshot(path="aifitness_login_fields_missing.png", full_page=True)
             raise RuntimeError(
-                "❌ Login-Felder/Button nicht gefunden. Screenshot: mysports_login_fields_missing.png"
+                "❌ Login-Felder/Button nicht gefunden. Screenshot: aifitness_login_fields_missing.png"
             )
 
         email_input.fill(login_email)
@@ -110,7 +153,7 @@ def login_and_validate(page, email=None, password=None):
 
     # Login abschliessen lassen (inkl. eventueller Redirects/Captcha)
     try:
-        page.wait_for_url(re.compile(r"mysports\.com/(?!login-register)"), timeout=60000)
+        page.wait_for_url(re.compile(r"/(?!login-register)[^/]*$"), timeout=60000)
     except PlaywrightTimeoutError:
         pass
 
@@ -120,20 +163,20 @@ def login_and_validate(page, email=None, password=None):
 
     # Falls weiterhin Login-Seite, Login war nicht erfolgreich
     if "login-register" in page.url:
-        page.screenshot(path="mysports_login_failed.png", full_page=True)
+        page.screenshot(path="aifitness_login_failed.png", full_page=True)
         raise RuntimeError(
             "❌ Login nicht abgeschlossen. Bitte Login/Captcha im Browser fertigstellen und erneut ausführen. "
-            "Screenshot: mysports_login_failed.png"
+            "Screenshot: aifitness_login_failed.png"
         )
 
-    # Verifizieren, dass Session auf Home weiterhin gültig ist
+    # Verifizieren, dass Session auf dem Kursplan weiterhin gültig ist
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_load_state("networkidle")
     if "login-register" in page.url:
-        page.screenshot(path="mysports_login_invalid.png", full_page=True)
+        page.screenshot(path="aifitness_login_invalid.png", full_page=True)
         raise RuntimeError(
             "❌ Session ist nicht gültig (zur Login-Seite zurückgeleitet). "
-            "Screenshot: mysports_login_invalid.png"
+            "Screenshot: aifitness_login_invalid.png"
         )
 
 def open_logged_in_context(playwright, headless=None, email=None, password=None):
