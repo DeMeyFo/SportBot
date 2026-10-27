@@ -1147,7 +1147,6 @@ def select_studio(page, studio_name=None):
         return False
     dismiss_cookie_banner(page)
 
-    print(f"🔎 DIAG select_studio START name='{name}' url={page.url}", flush=True)
     combo = first_visible(
         page.get_by_role("combobox"),
         page.locator("input[role='combobox']"),
@@ -1156,9 +1155,7 @@ def select_studio(page, studio_name=None):
         page.locator("input"),
     )
     if combo is None:
-        print("🔎 DIAG select_studio: kein Combobox-Feld gefunden.", flush=True)
         return False
-    print("🔎 DIAG select_studio: Combobox gefunden.", flush=True)
 
     # Stadt als Suchbegriff (z. B. "Verden") filtert zuverlaessiger als der
     # volle Name mit "Ai Fitness".
@@ -1182,17 +1179,13 @@ def select_studio(page, studio_name=None):
         except Exception as e:
             print(f"🔎 DIAG select_studio tippen fehlgeschlagen: {e}", flush=True)
 
-        print(f"🔎 DIAG select_studio: '{query}' getippt (Versuch {attempt+1}). url={page.url}", flush=True)
         # Auf gerenderte Optionen warten.
         pattern = re.compile(re.escape(name), re.IGNORECASE)
         option = None
         waited = 0
-        max_opts_seen = 0
         while waited < 6000:
             opt = page.get_by_role("option")
             n = opt.count()
-            if n > max_opts_seen:
-                max_opts_seen = n
             if n > 0:
                 # Zuerst exakter Namenstreffer, sonst erste Option.
                 named = page.get_by_role("option", name=pattern)
@@ -1210,13 +1203,7 @@ def select_studio(page, studio_name=None):
             page.wait_for_timeout(300)
             waited += 300
 
-        print(f"🔎 DIAG select_studio: role=option max gesehen={max_opts_seen}, Treffer gewaehlt={option is not None}", flush=True)
         if option is not None:
-            try:
-                sel_txt = re.sub(r"\s+", " ", (option.inner_text() or "")).strip()[:50]
-                print(f"🔎 DIAG select_studio: klicke Option '{sel_txt}'", flush=True)
-            except Exception:
-                pass
             try:
                 safe_click(option, label=f"SelectStudioOption:{query}")
             except Exception:
@@ -1230,18 +1217,13 @@ def select_studio(page, studio_name=None):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(800)
             # Nach der Auswahl zum Kursplan.
-            print(f"🔎 DIAG select_studio: nach Klick url={page.url}", flush=True)
             # WICHTIG: NICHT per goto(COURSE_URL) neu navigieren - das loest
             # erneut die Umleitung auf die /studios-Auswahlseite aus
-            # (Endlosschleife). Stattdessen in der App zum Kursplan gehen:
-            # entweder sind wir schon auf dem Studio, oder wir klicken den
-            # "Kurse"-Tab der In-App-Navigation.
+            # (Endlosschleife). Stattdessen in der App zum Kursplan gehen.
             if "/studios" in page.url:
                 # Auswahl hat nicht gegriffen - abbrechen, aeusserer Loop retryt.
-                print(f"🔎 DIAG select_studio: wieder auf /studios, Auswahl ungueltig.", flush=True)
                 return False
             navigate_to_kurse_tab(page)
-            print(f"🔎 DIAG select_studio: final url={page.url}", flush=True)
             return True
 
         # Keine Option: Tastatur-Fallback direkt am Combobox versuchen.
