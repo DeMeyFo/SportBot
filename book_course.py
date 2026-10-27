@@ -493,24 +493,29 @@ def ensure_kurse_page(page):
     for _ in range(4):
         close_blocking_overlays(page)
         # Falls auf der Studio-Auswahlseite gelandet: erst Zielstudio waehlen.
+        # select_studio navigiert danach per In-App-Tab zum Kursplan (kein goto,
+        # um keine erneute Umleitung auf /studios auszuloesen).
         if is_studio_selection_view(page):
-            select_studio(page, GYM_NAME)
-            if wait_for_kurse_view(page, timeout_ms=8000):
-                return
-        # Direkt auf die Kursplan-URL gehen - die Studio-ID steckt dort drin,
-        # ein Tab-Klick ist auf dem neuen Portal nicht noetig.
-        try:
-            if "course" not in page.url:
-                page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_load_state("networkidle")
-        except Exception:
-            pass
+            if select_studio(page, GYM_NAME):
+                if wait_for_kurse_view(page, timeout_ms=8000):
+                    return
+                # Auf gueltiger Studio-Seite, aber Kurse noch nicht sichtbar:
+                # In-App zum Kurse-Tab.
+                navigate_to_kurse_tab(page)
+                if wait_for_kurse_view(page, timeout_ms=8000):
+                    return
+            page.wait_for_timeout(500)
+            continue  # erneut von oben, falls wieder /studios
+
+        # Wenn wir auf einer Studio-Seite (nicht /course) sind: In-App-Tab statt
+        # goto nutzen, sonst drohte eine Umleitung auf /studios.
+        if "course" not in page.url:
+            navigate_to_kurse_tab(page)
         if wait_for_kurse_view(page, timeout_ms=8000):
             return
-        # Nach der URL-Navigation erneut auf Studio-Auswahl pruefen.
+        # Falls erneut auf Studio-Auswahl gelandet.
         if is_studio_selection_view(page):
-            select_studio(page, GYM_NAME)
-            if wait_for_kurse_view(page, timeout_ms=8000):
+            if select_studio(page, GYM_NAME) and wait_for_kurse_view(page, timeout_ms=8000):
                 return
 
         for loc in nav_candidates:
@@ -1107,6 +1112,32 @@ def is_studio_selection_view(page):
         pass
     return False
 
+def navigate_to_kurse_tab(page):
+    # Klickt in der App auf den "Kurse"-Tab (ohne page.goto, um keine
+    # Umleitung auf die /studios-Auswahlseite auszuloesen).
+    candidates = [
+        page.get_by_role("link", name=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_role("button", name=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_role("tab", name=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.locator("header a, nav a, [role='navigation'] a").filter(has_text=re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+        page.get_by_text(re.compile(r"^Kurse$|^Classes$", re.IGNORECASE)),
+    ]
+    for loc in candidates:
+        try:
+            cnt = loc.count()
+            for i in range(min(cnt, 8)):
+                item = loc.nth(i)
+                if not item.is_visible():
+                    continue
+                safe_click(item, label="KurseTab")
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(500)
+                if wait_for_kurse_view(page, timeout_ms=8000):
+                    return True
+        except Exception:
+            pass
+    return False
+
 def select_studio(page, studio_name=None):
     # Die Studio-Auswahlseite nutzt ein MUI-Autocomplete (combobox) mit
     # Placeholder "Standort auswaehlen...". Die Optionen (role=option) werden
@@ -1200,12 +1231,16 @@ def select_studio(page, studio_name=None):
             page.wait_for_timeout(800)
             # Nach der Auswahl zum Kursplan.
             print(f"🔎 DIAG select_studio: nach Klick url={page.url}", flush=True)
-            if "course" not in page.url:
-                try:
-                    page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=30000)
-                    page.wait_for_load_state("networkidle")
-                except Exception:
-                    pass
+            # WICHTIG: NICHT per goto(COURSE_URL) neu navigieren - das loest
+            # erneut die Umleitung auf die /studios-Auswahlseite aus
+            # (Endlosschleife). Stattdessen in der App zum Kursplan gehen:
+            # entweder sind wir schon auf dem Studio, oder wir klicken den
+            # "Kurse"-Tab der In-App-Navigation.
+            if "/studios" in page.url:
+                # Auswahl hat nicht gegriffen - abbrechen, aeusserer Loop retryt.
+                print(f"🔎 DIAG select_studio: wieder auf /studios, Auswahl ungueltig.", flush=True)
+                return False
+            navigate_to_kurse_tab(page)
             print(f"🔎 DIAG select_studio: final url={page.url}", flush=True)
             return True
 
