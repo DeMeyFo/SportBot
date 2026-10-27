@@ -1108,116 +1108,109 @@ def is_studio_selection_view(page):
     return False
 
 def select_studio(page, studio_name=None):
-    # Waehlt auf der Studio-Auswahlseite das Zielstudio aus, damit wir zum
-    # Kursplan gelangen. Die Liste ist i. d. R. ueber ein Suchfeld filterbar;
-    # die Eintraege sind oft Listenelemente/Options statt klassischer Links.
+    # Die Studio-Auswahlseite nutzt ein MUI-Autocomplete (combobox) mit
+    # Placeholder "Standort auswaehlen...". Die Optionen (role=option) werden
+    # erst gerendert, nachdem man ins Feld klickt und tippt.
     name = (studio_name or GYM_NAME or "").strip()
     if not name:
         return False
     dismiss_cookie_banner(page)
 
-    def try_click_entry():
-        # Breite Kandidatensuche nach dem Studionamen.
-        pattern = re.compile(re.escape(name), re.IGNORECASE)
-        locators = [
-            page.get_by_role("option", name=pattern),
-            page.get_by_role("link", name=pattern),
-            page.get_by_role("button", name=pattern),
-            page.get_by_role("listitem").filter(has_text=pattern),
-            page.locator("li, [role='option'], a[href], [class*='item' i], [class*='Studio' i], [class*='card' i]").filter(has_text=pattern),
-            page.get_by_text(pattern),
-        ]
-        for loc in locators:
-            cnt = loc.count()
-            for i in range(min(cnt, 25)):
-                item = loc.nth(i)
-                try:
-                    if not item.is_visible():
-                        continue
-                    safe_click(item, label=f"SelectStudio:{name}")
-                    page.wait_for_load_state("networkidle")
-                    page.wait_for_timeout(800)
-                    return True
-                except Exception:
-                    pass
+    combo = first_visible(
+        page.get_by_role("combobox"),
+        page.locator("input[role='combobox']"),
+        page.get_by_placeholder(re.compile(r"Standort ausw[aä]hlen|Standort|Studio|Location", re.IGNORECASE)),
+        page.locator("input#mui-3"),
+        page.locator("input"),
+    )
+    if combo is None:
+        print("🔎 DIAG select_studio: kein Combobox-Feld gefunden.", flush=True)
         return False
 
-    # 1) Direkter Klickversuch (ohne Filtern).
-    clicked = try_click_entry()
+    # Stadt als Suchbegriff (z. B. "Verden") filtert zuverlaessiger als der
+    # volle Name mit "Ai Fitness".
+    query = re.sub(r"\bAi\s*Fitness\b", "", name, flags=re.IGNORECASE).strip() or name
 
-    # 2) Falls nicht klickbar: Suchfeld nutzen, Namen tippen, dann Treffer klicken.
-    if not clicked:
-        search = first_visible(
-            page.get_by_role("searchbox"),
-            page.get_by_role("combobox"),
-            page.get_by_role("textbox"),
-            page.locator("input[type='search']"),
-            page.locator("input[type='text']"),
-            page.locator("input"),
-        )
-        if search is not None:
+    for attempt in range(3):
+        try:
+            combo.click()
+            page.wait_for_timeout(200)
+            # Feld leeren und Suchbegriff tippen (press_sequentially loest die
+            # Autocomplete-Filterung zuverlaessig aus).
             try:
-                search.click()
-                search.fill("")
-                # Nur die Stadt eintippen hilft beim Filtern (z. B. "Verden").
-                query = name.replace("Ai Fitness", "").strip() or name
-                search.fill(query)
-                page.wait_for_timeout(1000)
-                page.wait_for_load_state("networkidle")
+                combo.fill("")
             except Exception:
                 pass
-            clicked = try_click_entry()
-            if not clicked:
-                # Als Fallback: erster Listentreffer nach dem Filtern.
+            try:
+                combo.press_sequentially(query, delay=40)
+            except Exception:
+                combo.type(query, delay=40)
+            page.wait_for_timeout(900)
+        except Exception as e:
+            print(f"🔎 DIAG select_studio tippen fehlgeschlagen: {e}", flush=True)
+
+        # Auf gerenderte Optionen warten.
+        pattern = re.compile(re.escape(name), re.IGNORECASE)
+        option = None
+        waited = 0
+        while waited < 6000:
+            opt = page.get_by_role("option")
+            n = opt.count()
+            if n > 0:
+                # Zuerst exakter Namenstreffer, sonst erste Option.
+                named = page.get_by_role("option", name=pattern)
+                if named.count() and named.first.is_visible():
+                    option = named.first
+                    break
+                # Falls Name nicht als Accessible-Name matcht: per Text suchen.
+                by_text = opt.filter(has_text=pattern)
+                if by_text.count() and by_text.first.is_visible():
+                    option = by_text.first
+                    break
+                if opt.first.is_visible():
+                    option = opt.first
+                    break
+            page.wait_for_timeout(300)
+            waited += 300
+
+        if option is not None:
+            try:
+                safe_click(option, label=f"SelectStudioOption:{query}")
+            except Exception:
+                # Tastatur-Fallback: erste Option per ArrowDown+Enter.
                 try:
-                    opt = first_visible(
-                        page.get_by_role("option"),
-                        page.get_by_role("listitem"),
-                        page.locator("li, [role='option']"),
-                    )
-                    if opt is not None:
-                        safe_click(opt, label="SelectStudioFirstFiltered")
-                        page.wait_for_load_state("networkidle")
-                        page.wait_for_timeout(800)
-                        clicked = True
+                    combo.press("ArrowDown")
+                    page.wait_for_timeout(150)
+                    combo.press("Enter")
                 except Exception:
                     pass
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(800)
+            # Nach der Auswahl zum Kursplan.
+            if "course" not in page.url:
+                try:
+                    page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_load_state("networkidle")
+                except Exception:
+                    pass
+            return True
 
-    if clicked:
-        # Nach der Auswahl direkt auf den Kursplan des Studios.
-        if "course" not in page.url:
-            try:
-                page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_load_state("networkidle")
-            except Exception:
-                pass
-        return True
-
-    # Diagnose: klickbare Elemente auf der Auswahlseite ausgeben.
-    try:
-        print("🔎 DIAG Studio-Auswahl: kein klickbarer Treffer. Struktur:", flush=True)
-        for role in ("option", "listitem", "link", "button"):
-            try:
-                c = page.get_by_role(role).count()
-                print(f"🔎 DIAG role={role}: {c}", flush=True)
-            except Exception:
-                pass
-        for sel in ("input", "li", "a[href]"):
-            try:
-                c = page.locator(sel).count()
-                print(f"🔎 DIAG sel={sel}: {c}", flush=True)
-            except Exception:
-                pass
-        # Erste paar Zeilen der sichtbaren klickbaren Container zeigen.
+        # Keine Option: Tastatur-Fallback direkt am Combobox versuchen.
         try:
-            lis = page.locator("li")
-            for i in range(min(lis.count(), 5)):
-                t = re.sub(r"\s+", " ", (lis.nth(i).inner_text() or "")).strip()[:50]
-                print(f"🔎 DIAG li[{i}]: '{t}'", flush=True)
+            combo.press("ArrowDown")
+            page.wait_for_timeout(200)
+            combo.press("Enter")
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(600)
+            if "studios" not in page.url:
+                if "course" not in page.url:
+                    page.goto(COURSE_URL, wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_load_state("networkidle")
+                return True
         except Exception:
             pass
-    except Exception:
-        pass
+
+    print("🔎 DIAG select_studio: keine Autocomplete-Option nach Tippen gefunden.", flush=True)
     return False
 
 def open_member_course_page(page, email=None, password=None):
